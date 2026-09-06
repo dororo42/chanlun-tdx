@@ -1,0 +1,7 @@
+/target
+*.dll
+*.exp
+*.lib
+__pycache__/
+*.pyc
+.venv/

@@ -1,0 +1,13 @@
+[package]
+name = "chanlun_tdx"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Chan theory (Chanlun) engine ported from YuYuKunKun/chanlun.py as a TDX (通达信) plugin DLL"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = true
+opt-level = 3
