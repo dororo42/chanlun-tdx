@@ -155,35 +155,65 @@ static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
 fn get_output_row(bars: &[Bar], mark: usize) -> Vec<f32> {
     let key = key_of(bars);
-    let mut guard = CACHE.lock().unwrap();
+    // Mutex 中毒恢复：若前一次 panic 导致锁被毒化，清空缓存重建
+    let mut guard = match CACHE.lock() {
+        Ok(g) => g,
+        Err(poisoned) => {
+            *poisoned.into_inner() = None;
+            CACHE.lock().unwrap_or_else(|p| p.into_inner())
+        }
+    };
     let need = !matches!(guard.as_ref(), Some(c) if c.key == key);
     if need {
         let outs = compute_all(bars);
         *guard = Some(Cache { key, outs });
     }
-    guard.as_ref().unwrap().outs.data[mark - 1].clone()
+    match guard.as_ref() {
+        Some(c) => c.outs.data.get(mark.wrapping_sub(1)).cloned().unwrap_or_default(),
+        None => vec![0.0; bars.len()],
+    }
 }
 
 /// TDX 计算函数签名：fn(DataLen, pfOUT, pfINa=HIGH, pfINb=LOW, pfINc=CLOSE)
 type CalcFunc = unsafe extern "C" fn(i32, *mut f32, *const f32, *const f32, *const f32);
 
+/// FFI 安全入口：catch_unwind 防止任何 Rust panic 穿透到 TDX 进程
 unsafe fn run_calc(mark: usize, data_len: i32, pf_out: *mut f32, a: *const f32, b: *const f32, c: *const f32) {
     let n = data_len.max(0) as usize;
-    if n == 0 {
+    if n == 0 || pf_out.is_null() || a.is_null() || b.is_null() || c.is_null() {
         return;
     }
+    // 读入 K 线数据，过滤 NaN/Inf（停牌股、新股等常见）
     let bars: Vec<Bar> = (0..n)
-        .map(|i| Bar {
-            ts: i as i64,
-            open: 0.0,
-            high: *a.add(i) as f64,
-            low: *b.add(i) as f64,
-            close: *c.add(i) as f64,
+        .map(|i| {
+            let h = *a.add(i);
+            let l = *b.add(i);
+            let cl = *c.add(i);
+            // NaN/Inf/非正值 → 用相邻有效值填充或置 0
+            let h = if h.is_finite() && h > 0.0 { h } else { 0.0 };
+            let l = if l.is_finite() && l > 0.0 { l } else { 0.0 };
+            let cl = if cl.is_finite() && cl > 0.0 { cl } else { 0.0 };
+            Bar { ts: i as i64, open: 0.0, high: h as f64, low: l as f64, close: cl as f64 }
         })
         .collect();
-    let outs = get_output_row(&bars, mark);
-    for i in 0..n {
-        *pf_out.add(i) = outs[i];
+
+    // catch_unwind：任何 panic 都不穿透 FFI，输出全零
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        get_output_row(&bars, mark)
+    }));
+
+    match result {
+        Ok(outs) => {
+            for i in 0..n {
+                *pf_out.add(i) = outs.get(i).copied().unwrap_or(0.0);
+            }
+        }
+        Err(_) => {
+            // panic 被捕获 → 输出全零，TDX 不崩
+            for i in 0..n {
+                *pf_out.add(i) = 0.0;
+            }
+        }
     }
 }
 

@@ -58,7 +58,8 @@ pub fn rel(ph: f64, pl: f64, ch: f64, cl: f64) -> Rel {
     } else if ph <= ch && pl >= cl {
         Rel::Ni
     } else {
-        unreachable!("rel: unclassifiable ranges")
+        // NaN/Infinity 或异常数据 → 视为同向（安全降级，不 panic）
+        Rel::Same
     }
 }
 
@@ -251,7 +252,9 @@ pub fn build_strokes(ks: &[ChanK], fxs: &[Fx]) -> Vec<Fx> {
     let mut i = 0usize;
     while i < fxs.len() {
         guard += 1;
-        assert!(guard < 2_000_000, "build_strokes: iteration overflow");
+        if guard > 2_000_000 {
+            break; // 迭代超限 → 安全退出（不 panic）
+        }
         let f = fxs[i];
         match eps.last().copied() {
             None => {
@@ -719,7 +722,7 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
                 let mut merged_ok = false;
                 if segs.len() >= 2 && prev_gap {
                     // 前段处于老阳/老阴链：其产生时继承的终止间隔缺口 = prev_gap
-                    let prev = segs.last().unwrap();
+                    let Some(prev) = segs.last() else { break };
                     // L5728：老阳(向上段)→反向笔低点破段低；老阴(向下段)→反向笔高点破段高
                     let prev_high = prev.wen_feat.max(prev.wu_feat);
                     let prev_low = prev.wen_feat.min(prev.wu_feat);
@@ -743,7 +746,7 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
                         };
                         if !prev_still_valid {
                             // 前段基础序列 += 被撤段基础序列，重新刷新（L5742-5753）
-                            let popped = segs.pop().unwrap();
+                            let Some(popped) = segs.pop() else { break };
                             let new_start = popped.start_bi;
                             let new_dir = popped.dir_up;
                             // 合并后的段终点 = 段方向上的极值端（在突破笔之前）——
