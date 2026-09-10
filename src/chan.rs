@@ -678,14 +678,22 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
     let mut i = start; // 新段起始笔（= 上段终止"中"元素的文端笔，与上段共享端点 bar）
     let mut feat_from = start; // 特征扫描起点（L5414：前一结束位置-1）
     let mut prev_gap = false;
+    // 前进性保险：i 每轮至少 +1（由 mid_wen > i 保证），正常最多 n 轮。
+    // 无限循环会无限 push Segment → OOM abort，catch_unwind 拦不住（TDX 直接退出）。
+    let mut loop_guard = 0usize;
     while i < n {
+        loop_guard += 1;
+        if loop_guard > n + 4 {
+            break; // 理论不可达：防御异常数据形态
+        }
         // 首段方向 = 首笔方向；后续段起点笔的方向即新段方向（L6076-6077 分割序列的后序列）
         let dir_up = bis[i].dir_up;
         let view: Vec<usize> = (feat_from..bis.len()).collect();
         let scan = scan_features(bis, &view, dir_up, prev_gap);
         match scan.terminated {
-            // 终止笔为序列最后一笔时，其右特征不完整（右端临时分型所致），不构成有效终止
-            Some((end_bi, gap, mid_wen)) if end_bi > i && end_bi < n - 1 => {
+            // 终止笔为序列最后一笔时，其右特征不完整（右端临时分型所致），不构成有效终止；
+            // mid_wen 必须 > i（前进性）：否则 i = mid_wen 后 view 不变 → 死循环。
+            Some((end_bi, gap, mid_wen)) if end_bi > i && end_bi < n - 1 && mid_wen > i => {
                 // 终止分型"中"元素的 bar（py: 武 = 特征分型"中".文.中.标的K线.序号）
                 // - down 段被底分型终止：底分型中间 = 谷底 = 上行笔的文端（底）
                 // - up 段被顶分型终止：顶分型中间 = 峰顶 = 下行笔的文端（顶）

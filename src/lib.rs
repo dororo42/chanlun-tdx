@@ -255,43 +255,222 @@ calc_func!(calc_resv20, 20);
 
 const FUNC_COUNT: usize = 20;
 
+/// 通达信官方插件协议结构（三字段，顺序/布局必须与 C 端一致）：
+/// ```c
+/// typedef struct tagPluginTCalcFuncInfo {
+///     WORD        nFuncMark;    // 函数编号
+///     char*       strFuncName;  // 函数名称（C 字符串）
+///     pPluginFUNC pCallFunc;    // 函数指针
+/// } PluginTCalcFuncInfo;
+/// ```
+/// 布局：32 位 = u16 + pad(2) + char*(4) + fn*(4) = 12 字节；
+///       64 位 = u16 + pad(6) + char*(8) + fn*(8) = 24 字节。
+/// 【历史教训】缺 strFuncName 时 TDX 按 12/24 字节步长遍历，会把后续项的
+/// mark 编号当函数指针调用（跳转到 0x2 等非法地址）→ 通达信直接退出，
+/// catch_unwind 无法拦截（崩在 TDX 进程的间接跳转里）。
 #[repr(C)]
 pub struct PluginTCalcFuncInfo {
     pub n_func_mark: u16,
+    pub str_func_name: *const std::os::raw::c_char,
     pub p_call_func: Option<CalcFunc>,
 }
 
-static mut FUNC_TABLE: [PluginTCalcFuncInfo; FUNC_COUNT + 1] = [
-    PluginTCalcFuncInfo { n_func_mark: 1, p_call_func: Some(calc_fx_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 2, p_call_func: Some(calc_fx_price) },
-    PluginTCalcFuncInfo { n_func_mark: 3, p_call_func: Some(calc_bi_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 4, p_call_func: Some(calc_bi_price) },
-    PluginTCalcFuncInfo { n_func_mark: 5, p_call_func: Some(calc_bi_zs_zg) },
-    PluginTCalcFuncInfo { n_func_mark: 6, p_call_func: Some(calc_bi_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 7, p_call_func: Some(calc_bi_zs_start) },
-    PluginTCalcFuncInfo { n_func_mark: 8, p_call_func: Some(calc_xd_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 9, p_call_func: Some(calc_xd_price) },
-    PluginTCalcFuncInfo { n_func_mark: 10, p_call_func: Some(calc_xd_zs_zg) },
-    PluginTCalcFuncInfo { n_func_mark: 11, p_call_func: Some(calc_buy3) },
-    PluginTCalcFuncInfo { n_func_mark: 12, p_call_func: Some(calc_sell3) },
-    PluginTCalcFuncInfo { n_func_mark: 13, p_call_func: Some(calc_buy2) },
-    PluginTCalcFuncInfo { n_func_mark: 14, p_call_func: Some(calc_sell2) },
-    PluginTCalcFuncInfo { n_func_mark: 15, p_call_func: Some(calc_buy1) },
-    PluginTCalcFuncInfo { n_func_mark: 16, p_call_func: Some(calc_sell1) },
-    PluginTCalcFuncInfo { n_func_mark: 17, p_call_func: Some(calc_pz_beichi) },
-    PluginTCalcFuncInfo { n_func_mark: 18, p_call_func: Some(calc_xd_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 19, p_call_func: Some(calc_resv19) },
-    PluginTCalcFuncInfo { n_func_mark: 20, p_call_func: Some(calc_resv20) },
-    PluginTCalcFuncInfo { n_func_mark: 0, p_call_func: None },
+// 表内容初始化后只读（TDX 只读，Rust 侧不写）→ 裸指针跨线程只读共享是安全的。
+unsafe impl Sync for PluginTCalcFuncInfo {}
+
+/// C 字符串名字（const 上下文可用）
+const fn cname(s: &'static [u8]) -> *const std::os::raw::c_char {
+    s.as_ptr() as *const std::os::raw::c_char
+}
+
+/// 函数表（TDX 只读，末项 mark=0 为终止哨兵）
+static FUNC_TABLE: [PluginTCalcFuncInfo; FUNC_COUNT + 1] = [
+    PluginTCalcFuncInfo { n_func_mark: 1, str_func_name: cname(b"chanlun_fx_mark\0"), p_call_func: Some(calc_fx_mark) },
+    PluginTCalcFuncInfo { n_func_mark: 2, str_func_name: cname(b"chanlun_fx_price\0"), p_call_func: Some(calc_fx_price) },
+    PluginTCalcFuncInfo { n_func_mark: 3, str_func_name: cname(b"chanlun_bi_mark\0"), p_call_func: Some(calc_bi_mark) },
+    PluginTCalcFuncInfo { n_func_mark: 4, str_func_name: cname(b"chanlun_bi_price\0"), p_call_func: Some(calc_bi_price) },
+    PluginTCalcFuncInfo { n_func_mark: 5, str_func_name: cname(b"chanlun_bi_zs_zg\0"), p_call_func: Some(calc_bi_zs_zg) },
+    PluginTCalcFuncInfo { n_func_mark: 6, str_func_name: cname(b"chanlun_bi_zs_zd\0"), p_call_func: Some(calc_bi_zs_zd) },
+    PluginTCalcFuncInfo { n_func_mark: 7, str_func_name: cname(b"chanlun_bi_zs_start\0"), p_call_func: Some(calc_bi_zs_start) },
+    PluginTCalcFuncInfo { n_func_mark: 8, str_func_name: cname(b"chanlun_xd_mark\0"), p_call_func: Some(calc_xd_mark) },
+    PluginTCalcFuncInfo { n_func_mark: 9, str_func_name: cname(b"chanlun_xd_price\0"), p_call_func: Some(calc_xd_price) },
+    PluginTCalcFuncInfo { n_func_mark: 10, str_func_name: cname(b"chanlun_xd_zs_zg\0"), p_call_func: Some(calc_xd_zs_zg) },
+    PluginTCalcFuncInfo { n_func_mark: 11, str_func_name: cname(b"chanlun_buy3\0"), p_call_func: Some(calc_buy3) },
+    PluginTCalcFuncInfo { n_func_mark: 12, str_func_name: cname(b"chanlun_sell3\0"), p_call_func: Some(calc_sell3) },
+    PluginTCalcFuncInfo { n_func_mark: 13, str_func_name: cname(b"chanlun_buy2\0"), p_call_func: Some(calc_buy2) },
+    PluginTCalcFuncInfo { n_func_mark: 14, str_func_name: cname(b"chanlun_sell2\0"), p_call_func: Some(calc_sell2) },
+    PluginTCalcFuncInfo { n_func_mark: 15, str_func_name: cname(b"chanlun_buy1\0"), p_call_func: Some(calc_buy1) },
+    PluginTCalcFuncInfo { n_func_mark: 16, str_func_name: cname(b"chanlun_sell1\0"), p_call_func: Some(calc_sell1) },
+    PluginTCalcFuncInfo { n_func_mark: 17, str_func_name: cname(b"chanlun_pz_beichi\0"), p_call_func: Some(calc_pz_beichi) },
+    PluginTCalcFuncInfo { n_func_mark: 18, str_func_name: cname(b"chanlun_xd_zs_zd\0"), p_call_func: Some(calc_xd_zs_zd) },
+    PluginTCalcFuncInfo { n_func_mark: 19, str_func_name: cname(b"chanlun_resv19\0"), p_call_func: Some(calc_resv19) },
+    PluginTCalcFuncInfo { n_func_mark: 20, str_func_name: cname(b"chanlun_resv20\0"), p_call_func: Some(calc_resv20) },
+    PluginTCalcFuncInfo { n_func_mark: 0, str_func_name: std::ptr::null(), p_call_func: None },
 ];
 
-/// 通达信插件注册入口
+/// 通达信插件注册入口：把函数表首地址写回 TDX 传入的二级指针
 #[no_mangle]
-pub unsafe extern "C" fn RegisterTdxFunc(p_fun: *mut *mut PluginTCalcFuncInfo) -> i32 {
-    if (*p_fun).is_null() {
-        *p_fun = std::ptr::addr_of_mut!(FUNC_TABLE[0]);
-        1
-    } else {
-        0
+pub unsafe extern "C" fn RegisterTdxFunc(p_fun: *mut *const PluginTCalcFuncInfo) -> i32 {
+    if p_fun.is_null() {
+        return 0;
+    }
+    *p_fun = FUNC_TABLE.as_ptr();
+    1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 结构布局必须与 TDX C 端一致：32 位 12 字节，64 位 24 字节。
+    /// 字段偏移：mark@0，strFuncName@指针大小，pCallFunc@2×指针大小。
+    #[test]
+    fn tdx_struct_layout() {
+        use std::mem::{align_of, offset_of, size_of};
+        assert_eq!(size_of::<PluginTCalcFuncInfo>(), std::mem::size_of::<usize>() * 3);
+        assert_eq!(align_of::<PluginTCalcFuncInfo>(), std::mem::align_of::<usize>());
+        assert_eq!(offset_of!(PluginTCalcFuncInfo, n_func_mark), 0);
+        assert_eq!(offset_of!(PluginTCalcFuncInfo, str_func_name), std::mem::size_of::<usize>());
+        assert_eq!(offset_of!(PluginTCalcFuncInfo, p_call_func), std::mem::size_of::<usize>() * 2);
+    }
+
+    /// 函数表完整性：mark 1-20 连续、每个函数指针非空且名字以 \0 结尾、末项哨兵。
+    #[test]
+    fn tdx_func_table_valid() {
+        for (i, info) in FUNC_TABLE.iter().enumerate() {
+            if i < FUNC_COUNT {
+                assert_eq!(info.n_func_mark as usize, i + 1, "mark 连续");
+                assert!(info.p_call_func.is_some(), "mark {} 缺函数指针", i + 1);
+                let mut len = 0usize;
+                unsafe {
+                    while *info.str_func_name.add(len) != 0 {
+                        len += 1;
+                        assert!(len < 64, "函数名未以 NUL 结尾");
+                    }
+                }
+                assert!(len > 0, "mark {} 名字为空", i + 1);
+            } else {
+                assert_eq!(info.n_func_mark, 0);
+                assert!(info.p_call_func.is_none());
+                assert!(info.str_func_name.is_null());
+            }
+        }
+    }
+
+    /// RegisterTdxFunc 行为：回写表地址、返回 1；空指针参数返回 0。
+    #[test]
+    fn tdx_register_behavior() {
+        unsafe {
+            let mut p: *const PluginTCalcFuncInfo = std::ptr::null();
+            assert_eq!(RegisterTdxFunc(&mut p), 1);
+            assert_eq!(p, FUNC_TABLE.as_ptr());
+            let null_pp: *mut *const PluginTCalcFuncInfo = std::ptr::null_mut();
+            assert_eq!(RegisterTdxFunc(null_pp), 0);
+        }
+    }
+
+    /// 健壮性：模拟 TDX 读表方式（按 C 布局偏移取函数指针）验证可安全取到。
+    #[test]
+    fn tdx_c_layout_indirect_access() {
+        unsafe {
+            let mut p: *const PluginTCalcFuncInfo = std::ptr::null();
+            RegisterTdxFunc(&mut p);
+            let mut i = 0usize;
+            loop {
+                let info = &*p.add(i);
+                if info.n_func_mark == 0 {
+                    break;
+                }
+                let f = info.p_call_func;
+                assert!(f.is_some());
+                i += 1;
+            }
+            assert_eq!(i, FUNC_COUNT);
+        }
+    }
+
+    /// 健壮性：极端输入下 compute_all 不 panic（新股极短、停牌全 0、
+    /// 含 0 段、极值），且输出长度 == bar 数。
+    #[test]
+    fn compute_all_hostile_inputs() {
+        fn check(bars: &[Bar]) {
+            let outs = compute_all(bars);
+            assert_eq!(outs.data.len(), 20);
+            for (m, row) in outs.data.iter().enumerate() {
+                assert_eq!(row.len(), bars.len(), "mark {} 输出长度错", m + 1);
+                assert!(row.iter().all(|v| v.is_finite()), "mark {} 含非有限值", m + 1);
+            }
+        }
+        // 空序列
+        check(&[]);
+        // 极短序列（1-3 根，新股）
+        check(&[Bar { ts: 0, open: 1.0, high: 2.0, low: 0.5, close: 1.5 }]);
+        check(&[
+            Bar { ts: 0, open: 1.0, high: 2.0, low: 0.5, close: 1.5 },
+            Bar { ts: 1, open: 1.5, high: 2.5, low: 1.0, close: 2.0 },
+        ]);
+        // 全 0（停牌/无数据）
+        check(&[Bar { ts: 0, open: 0.0, high: 0.0, low: 0.0, close: 0.0 }; 300]);
+        // 全同值（一字板）
+        check(&[Bar { ts: 0, open: 5.0, high: 5.0, low: 5.0, close: 5.0 }; 300]);
+        // 含 0 段 + 正常段混合
+        let mut mixed = vec![Bar { ts: 0, open: 0.0, high: 0.0, low: 0.0, close: 0.0 }; 50];
+        for i in 0..400 {
+            let base = 10.0 + (i as f64 * 0.13).sin() * 3.0;
+            mixed.push(Bar { ts: i as i64, open: base, high: base + 1.0, low: base - 1.0, close: base + 0.5 });
+        }
+        check(&mixed);
+        // 单调数据（无分型/无笔形态）
+        let mono: Vec<Bar> = (0..200).map(|i| Bar { ts: i, open: i as f64, high: i as f64 + 1.0, low: i as f64 - 1.0, close: i as f64 }).collect();
+        check(&mono);
+        // 极值
+        check(&[
+            Bar { ts: 0, open: 1e-8, high: 1e-8, low: 1e-8, close: 1e-8 },
+            Bar { ts: 1, open: 1e10, high: 1e12, low: 1e-10, close: 1e11 },
+            Bar { ts: 2, open: 5.0, high: 6.0, low: 4.0, close: 5.0 },
+        ]);
+    }
+
+    /// 端到端：完全模拟 TDX 的调用方式 —— 经函数表取函数指针、传原生
+    /// f32 缓冲区调用并写回输出。含 NaN 输入（停牌股）场景验证不崩且输出有限。
+    #[test]
+    fn tdx_end_to_end_via_func_pointer() {
+        unsafe {
+            let n = 300usize;
+            let mut hi = vec![0f32; n];
+            let mut lo = vec![0f32; n];
+            let mut cl = vec![0f32; n];
+            for i in 0..n {
+                let base = 10.0 + (i as f32 * 0.2).sin() * 3.0;
+                hi[i] = base + 1.0;
+                lo[i] = base - 1.0;
+                cl[i] = base;
+            }
+            let mut p: *const PluginTCalcFuncInfo = std::ptr::null();
+            RegisterTdxFunc(&mut p);
+            // 按表查找 mark（模拟 TDX 按 TDXDLL1(13,...) 定位函数）
+            let mut i = 0usize;
+            let f = loop {
+                let info = &*p.add(i);
+                if info.n_func_mark == 13 {
+                    break info.p_call_func.unwrap();
+                }
+                i += 1;
+            };
+            // 正常数据
+            let mut out = vec![f32::NAN; n];
+            f(n as i32, out.as_mut_ptr(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
+            assert!(out.iter().all(|v| v.is_finite()), "正常数据输出含 NaN");
+
+            // NaN 输入（停牌股/无数据品种）
+            let bad = vec![f32::NAN; n];
+            let mut out2 = vec![f32::NAN; n];
+            f(n as i32, out2.as_mut_ptr(), bad.as_ptr(), bad.as_ptr(), bad.as_ptr());
+            assert!(out2.iter().all(|v| v.is_finite()), "NaN 输入必须输出有限值");
+
+            // DataLen=0 / 空指针（防御）
+            f(0, out2.as_mut_ptr(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
+            f(n as i32, std::ptr::null_mut(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
+        }
     }
 }
