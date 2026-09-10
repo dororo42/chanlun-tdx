@@ -255,57 +255,49 @@ calc_func!(calc_resv20, 20);
 
 const FUNC_COUNT: usize = 20;
 
-/// 通达信官方插件协议结构（三字段，顺序/布局必须与 C 端一致）：
+/// 通达信官方插件协议结构（两字段、packed(1) 无对齐填充）：
 /// ```c
+/// #pragma pack(1)
 /// typedef struct tagPluginTCalcFuncInfo {
 ///     WORD        nFuncMark;    // 函数编号
-///     char*       strFuncName;  // 函数名称（C 字符串）
 ///     pPluginFUNC pCallFunc;    // 函数指针
 /// } PluginTCalcFuncInfo;
 /// ```
-/// 布局：32 位 = u16 + pad(2) + char*(4) + fn*(4) = 12 字节；
-///       64 位 = u16 + pad(6) + char*(8) + fn*(8) = 24 字节。
-/// 【历史教训】缺 strFuncName 时 TDX 按 12/24 字节步长遍历，会把后续项的
-/// mark 编号当函数指针调用（跳转到 0x2 等非法地址）→ 通达信直接退出，
-/// catch_unwind 无法拦截（崩在 TDX 进程的间接跳转里）。
-#[repr(C)]
+/// 布局：32 位 = u16 + fn*(4) = 6 字节；64 位 = u16 + fn*(8) = 10 字节。
+/// 【实测依据】chan2zen/rust-chan（Rust 缠论 TDX 插件，选股实测可跑）即用
+/// `#[repr(C, packed(1))]` 两字段结构。
+/// 【历史教训 v0.1.0-v0.1.2 崩溃根因】非 packed 布局在 mark 后有 2 字节
+/// 对齐 padding，TDX 按 packed 步长在 offset+2 读函数指针 → 读到 padding →
+/// 跳转非法地址 → 通达信直接退出；catch_unwind 无法拦截（崩在 TDX 进程内）。
+#[repr(C, packed(1))]
 pub struct PluginTCalcFuncInfo {
     pub n_func_mark: u16,
-    pub str_func_name: *const std::os::raw::c_char,
     pub p_call_func: Option<CalcFunc>,
-}
-
-// 表内容初始化后只读（TDX 只读，Rust 侧不写）→ 裸指针跨线程只读共享是安全的。
-unsafe impl Sync for PluginTCalcFuncInfo {}
-
-/// C 字符串名字（const 上下文可用）
-const fn cname(s: &'static [u8]) -> *const std::os::raw::c_char {
-    s.as_ptr() as *const std::os::raw::c_char
 }
 
 /// 函数表（TDX 只读，末项 mark=0 为终止哨兵）
 static FUNC_TABLE: [PluginTCalcFuncInfo; FUNC_COUNT + 1] = [
-    PluginTCalcFuncInfo { n_func_mark: 1, str_func_name: cname(b"chanlun_fx_mark\0"), p_call_func: Some(calc_fx_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 2, str_func_name: cname(b"chanlun_fx_price\0"), p_call_func: Some(calc_fx_price) },
-    PluginTCalcFuncInfo { n_func_mark: 3, str_func_name: cname(b"chanlun_bi_mark\0"), p_call_func: Some(calc_bi_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 4, str_func_name: cname(b"chanlun_bi_price\0"), p_call_func: Some(calc_bi_price) },
-    PluginTCalcFuncInfo { n_func_mark: 5, str_func_name: cname(b"chanlun_bi_zs_zg\0"), p_call_func: Some(calc_bi_zs_zg) },
-    PluginTCalcFuncInfo { n_func_mark: 6, str_func_name: cname(b"chanlun_bi_zs_zd\0"), p_call_func: Some(calc_bi_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 7, str_func_name: cname(b"chanlun_bi_zs_start\0"), p_call_func: Some(calc_bi_zs_start) },
-    PluginTCalcFuncInfo { n_func_mark: 8, str_func_name: cname(b"chanlun_xd_mark\0"), p_call_func: Some(calc_xd_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 9, str_func_name: cname(b"chanlun_xd_price\0"), p_call_func: Some(calc_xd_price) },
-    PluginTCalcFuncInfo { n_func_mark: 10, str_func_name: cname(b"chanlun_xd_zs_zg\0"), p_call_func: Some(calc_xd_zs_zg) },
-    PluginTCalcFuncInfo { n_func_mark: 11, str_func_name: cname(b"chanlun_buy3\0"), p_call_func: Some(calc_buy3) },
-    PluginTCalcFuncInfo { n_func_mark: 12, str_func_name: cname(b"chanlun_sell3\0"), p_call_func: Some(calc_sell3) },
-    PluginTCalcFuncInfo { n_func_mark: 13, str_func_name: cname(b"chanlun_buy2\0"), p_call_func: Some(calc_buy2) },
-    PluginTCalcFuncInfo { n_func_mark: 14, str_func_name: cname(b"chanlun_sell2\0"), p_call_func: Some(calc_sell2) },
-    PluginTCalcFuncInfo { n_func_mark: 15, str_func_name: cname(b"chanlun_buy1\0"), p_call_func: Some(calc_buy1) },
-    PluginTCalcFuncInfo { n_func_mark: 16, str_func_name: cname(b"chanlun_sell1\0"), p_call_func: Some(calc_sell1) },
-    PluginTCalcFuncInfo { n_func_mark: 17, str_func_name: cname(b"chanlun_pz_beichi\0"), p_call_func: Some(calc_pz_beichi) },
-    PluginTCalcFuncInfo { n_func_mark: 18, str_func_name: cname(b"chanlun_xd_zs_zd\0"), p_call_func: Some(calc_xd_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 19, str_func_name: cname(b"chanlun_resv19\0"), p_call_func: Some(calc_resv19) },
-    PluginTCalcFuncInfo { n_func_mark: 20, str_func_name: cname(b"chanlun_resv20\0"), p_call_func: Some(calc_resv20) },
-    PluginTCalcFuncInfo { n_func_mark: 0, str_func_name: std::ptr::null(), p_call_func: None },
+    PluginTCalcFuncInfo { n_func_mark: 1, p_call_func: Some(calc_fx_mark) },
+    PluginTCalcFuncInfo { n_func_mark: 2, p_call_func: Some(calc_fx_price) },
+    PluginTCalcFuncInfo { n_func_mark: 3, p_call_func: Some(calc_bi_mark) },
+    PluginTCalcFuncInfo { n_func_mark: 4, p_call_func: Some(calc_bi_price) },
+    PluginTCalcFuncInfo { n_func_mark: 5, p_call_func: Some(calc_bi_zs_zg) },
+    PluginTCalcFuncInfo { n_func_mark: 6, p_call_func: Some(calc_bi_zs_zd) },
+    PluginTCalcFuncInfo { n_func_mark: 7, p_call_func: Some(calc_bi_zs_start) },
+    PluginTCalcFuncInfo { n_func_mark: 8, p_call_func: Some(calc_xd_mark) },
+    PluginTCalcFuncInfo { n_func_mark: 9, p_call_func: Some(calc_xd_price) },
+    PluginTCalcFuncInfo { n_func_mark: 10, p_call_func: Some(calc_xd_zs_zg) },
+    PluginTCalcFuncInfo { n_func_mark: 11, p_call_func: Some(calc_buy3) },
+    PluginTCalcFuncInfo { n_func_mark: 12, p_call_func: Some(calc_sell3) },
+    PluginTCalcFuncInfo { n_func_mark: 13, p_call_func: Some(calc_buy2) },
+    PluginTCalcFuncInfo { n_func_mark: 14, p_call_func: Some(calc_sell2) },
+    PluginTCalcFuncInfo { n_func_mark: 15, p_call_func: Some(calc_buy1) },
+    PluginTCalcFuncInfo { n_func_mark: 16, p_call_func: Some(calc_sell1) },
+    PluginTCalcFuncInfo { n_func_mark: 17, p_call_func: Some(calc_pz_beichi) },
+    PluginTCalcFuncInfo { n_func_mark: 18, p_call_func: Some(calc_xd_zs_zd) },
+    PluginTCalcFuncInfo { n_func_mark: 19, p_call_func: Some(calc_resv19) },
+    PluginTCalcFuncInfo { n_func_mark: 20, p_call_func: Some(calc_resv20) },
+    PluginTCalcFuncInfo { n_func_mark: 0, p_call_func: None },
 ];
 
 /// 通达信插件注册入口：把函数表首地址写回 TDX 传入的二级指针
@@ -322,37 +314,31 @@ pub unsafe extern "C" fn RegisterTdxFunc(p_fun: *mut *const PluginTCalcFuncInfo)
 mod tests {
     use super::*;
 
-    /// 结构布局必须与 TDX C 端一致：32 位 12 字节，64 位 24 字节。
-    /// 字段偏移：mark@0，strFuncName@指针大小，pCallFunc@2×指针大小。
+    /// 结构布局必须与 TDX C 端一致（packed(1)，实测依据 rust-chan）：
+    /// 32 位 = u16(2) + fn*(4) = 6 字节；64 位 = u16(2) + fn*(8) = 10 字节。
+    /// 字段偏移：mark@0，pCallFunc@2（无对齐填充——padding 是 v0.1.x 崩溃根因）。
     #[test]
     fn tdx_struct_layout() {
         use std::mem::{align_of, offset_of, size_of};
-        assert_eq!(size_of::<PluginTCalcFuncInfo>(), std::mem::size_of::<usize>() * 3);
-        assert_eq!(align_of::<PluginTCalcFuncInfo>(), std::mem::align_of::<usize>());
+        assert_eq!(size_of::<PluginTCalcFuncInfo>(), 2 + std::mem::size_of::<usize>(), "packed(1) 布局被破坏");
+        assert_eq!(align_of::<PluginTCalcFuncInfo>(), 1);
         assert_eq!(offset_of!(PluginTCalcFuncInfo, n_func_mark), 0);
-        assert_eq!(offset_of!(PluginTCalcFuncInfo, str_func_name), std::mem::size_of::<usize>());
-        assert_eq!(offset_of!(PluginTCalcFuncInfo, p_call_func), std::mem::size_of::<usize>() * 2);
+        assert_eq!(offset_of!(PluginTCalcFuncInfo, p_call_func), 2);
     }
 
-    /// 函数表完整性：mark 1-20 连续、每个函数指针非空且名字以 \0 结尾、末项哨兵。
+    /// 函数表完整性：mark 1-20 连续、每个函数指针非空、末项哨兵。
+    /// （packed 字段须先 copy 到局部再断言——取 packed 字段引用是 E0793）
     #[test]
     fn tdx_func_table_valid() {
         for (i, info) in FUNC_TABLE.iter().enumerate() {
+            let m = info.n_func_mark;
+            let f = info.p_call_func;
             if i < FUNC_COUNT {
-                assert_eq!(info.n_func_mark as usize, i + 1, "mark 连续");
-                assert!(info.p_call_func.is_some(), "mark {} 缺函数指针", i + 1);
-                let mut len = 0usize;
-                unsafe {
-                    while *info.str_func_name.add(len) != 0 {
-                        len += 1;
-                        assert!(len < 64, "函数名未以 NUL 结尾");
-                    }
-                }
-                assert!(len > 0, "mark {} 名字为空", i + 1);
+                assert_eq!(m as usize, i + 1, "mark 连续");
+                assert!(f.is_some(), "mark {} 缺函数指针", i + 1);
             } else {
-                assert_eq!(info.n_func_mark, 0);
-                assert!(info.p_call_func.is_none());
-                assert!(info.str_func_name.is_null());
+                assert_eq!(m, 0);
+                assert!(f.is_none());
             }
         }
     }
@@ -378,10 +364,10 @@ mod tests {
             let mut i = 0usize;
             loop {
                 let info = &*p.add(i);
-                if info.n_func_mark == 0 {
+                let (m, f) = (info.n_func_mark, info.p_call_func);
+                if m == 0 {
                     break;
                 }
-                let f = info.p_call_func;
                 assert!(f.is_some());
                 i += 1;
             }
@@ -452,8 +438,9 @@ mod tests {
             let mut i = 0usize;
             let f = loop {
                 let info = &*p.add(i);
-                if info.n_func_mark == 13 {
-                    break info.p_call_func.unwrap();
+                let (m, fun) = (info.n_func_mark, info.p_call_func);
+                if m == 13 {
+                    break fun.unwrap();
                 }
                 i += 1;
             };
