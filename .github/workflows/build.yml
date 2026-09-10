@@ -44,8 +44,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          merge-multiple: true
           path: dist
+      - name: Flatten and rename DLLs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path assets | Out-Null
+          Copy-Item dist/chanlun_tdx_x86_64-pc-windows-msvc/chanlun_tdx.dll assets/chanlun_tdx_x64.dll
+          Copy-Item dist/chanlun_tdx_i686-pc-windows-msvc/chanlun_tdx.dll assets/chanlun_tdx_x86.dll
       - uses: softprops/action-gh-release@v1
         with:
-          files: dist/*.dll
+          files: assets/*.dll
