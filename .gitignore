@@ -5,6 +5,19 @@
 __pycache__/
 *.pyc
 .venv/
-REPORT.md
-handoffs/
 tests/dbg.rs
+
+# ---- 不进仓库：内部规划与文档 ----
+# 口径/界面文档仅本地保留，GitHub 上不公开（README 中不再引用这些路径）
+PLAN.md
+docs/
+
+# ---- 不进仓库：评估报告与交接产物 ----
+# 覆盖 评估报告/分析报告/投顾报告/交接 等命名变体，以及一般的 REPORT 类文件
+REPORT.md
+*report*.md
+*报告*.md
+评估*.md
+分析*.md
+handoffs/
+overview.md

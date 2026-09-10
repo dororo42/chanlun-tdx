@@ -23,7 +23,7 @@ cargo build --release --target i686-pc-windows-msvc      # 32 位 DLL
 1. 从 [Releases](../../releases) 下载对应位数的 `chanlun_tdx.dll`
 2. 复制到通达信安装目录 `T0002\dlls\`（32 位 DLL）或通达信 64 位版的对应目录
 3. 打开通达信 → 功能 → 公式系统 → 公式管理器 → DLL 函数 → 绑定 DLL 文件到 TDXDLL1
-4. 导入 `formulas/` 下的三个公式（详见 [docs/dll-usage.md](docs/dll-usage.md)）
+4. 导入 `formulas/` 下的三个公式（见下方表格）
 
 | 文件 | 公式名 | 类型 | 作用 |
 |---|---|---|---|
@@ -31,7 +31,10 @@ cargo build --release --target i686-pc-windows-msvc      # 32 位 DLL
 | `formulas/缠论条件选股.txt` | `CLXG` | 条件选股 | 二买/三买 + 力度背驰 + 未被破坏 |
 | `formulas/缠论力度副图.txt` | `CLLD` | 副图 | 笔/段 幅度·天数·力度 与背驰 |
 
-公式的口径、开关与已知边界见 [docs/formulas.md](docs/formulas.md)。
+每个公式开头都有中文注释块，说明其口径、显示开关与已知边界。
+
+主图公式顶部提供 7 个显示开关（置 1 开 / 置 0 关）：`SHOW_FX`、`SHOW_BI`、`SHOW_BZS`、`SHOW_XD`、`SHOW_XZS`、`SHOW_MMD`、`SHOW_BC`。
+其中 `SHOW_BZS` / `SHOW_XZS` 分别控制笔中枢与线段中枢，二者可单独关闭以保持画面干净。
 
 ## DLL 函数表（mark → 输出）
 
