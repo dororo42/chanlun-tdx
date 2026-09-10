@@ -918,26 +918,39 @@ fn p_leave(lines: &[Line], p: &Pivot) -> Option<usize> {
 
 pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<MmdMark> {
     let mut out: Vec<MmdMark> = Vec::new();
-    // ---- 三买/三卖（L5473-5489 口径：离开笔与中枢呈缺口关系）----
+    // ---- 三买/三卖 ----
+    //
+    // 【v2 修改】旧实现只检查中枢后第 1 笔（循环里 `else { break }`，实际只判 end_li+1），
+    // 而结构上第 1 笔通常是「离开笔」、三买要判的是「回抽笔」→ 信号几乎不出（选股形同虚设）。
+    // 现对齐 chan2zen/rust-chan 的口径（market.rs `signals()` 在 `pole.index == pivot.end()`
+    // 后同时检查 poles[idx+1] 与 poles[idx+2]，`signal3_by` 只判「极点是否回到中枢」）：
+    //   三买 = 中枢后 1~2 笔内出现「向下笔（回抽）最低点 > ZG」
+    //   三卖 = 中枢后 1~2 笔内出现「向上笔（反抽）最高点 < ZD」
+    // 中间若遇到离开笔（向上离开=武端 > ZG / 向下离开=武端 < ZD）则继续看下一笔；
+    // 若该笔既未离开也未构成回抽 → 走势仍在中枢内，直接终止（与 rust-chan 一致）。
     for p in bi_pivots {
-        let mut cand: Option<usize> = None;
-        for j in (p.end_li + 1)..lines.len() {
-            let l = &lines[j];
-            if rel(p.zg, p.zd, l.high, l.low).is_gap() {
-                cand = Some(j);
-                break;
-            } else {
-                break; // 首笔未离开即停
-            }
+        if p.end_li + 1 >= lines.len() {
+            continue;
         }
-        if let Some(j) = cand {
+        let stop = (p.end_li + 2).min(lines.len() - 1);
+        let mut j = p.end_li + 1;
+        while j <= stop {
             let l = &lines[j];
+            // 回抽笔不回中枢 → 三买；反抽笔不回中枢 → 三卖
             if !l.dir_up && l.low > p.zg {
                 out.push(MmdMark { bar: l.wu, kind: Mmd::Buy3 });
+                break;
             }
             if l.dir_up && l.high < p.zd {
                 out.push(MmdMark { bar: l.wu, kind: Mmd::Sell3 });
+                break;
             }
+            // 离开笔：向上离开 = 武端（顶）高于 ZG；向下离开 = 武端（底）低于 ZD
+            let left = (l.dir_up && l.wu_feat > p.zg) || (!l.dir_up && l.wu_feat < p.zd);
+            if !left {
+                break;
+            }
+            j += 1;
         }
     }
     // ---- 一买/一卖：趋势（相邻两中枢同向且区间不重叠）+ 离开段 MACD 面积背驰 ----
@@ -1004,7 +1017,9 @@ pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<Mmd
             }
         }
     }
+    // 同一 bar 可能被多个中枢重复判定出同类买卖点（中枢重叠时），去重后再输出
     out.sort_by_key(|m| m.bar);
+    out.dedup_by(|a, b| a.bar == b.bar && a.kind == b.kind);
     out
 }
 

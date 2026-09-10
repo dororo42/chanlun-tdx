@@ -28,8 +28,14 @@ pub mod mark {
     pub const SELL1: usize = 16;
     pub const PZ_BEICHI: usize = 17;
     pub const XD_ZS_ZD: usize = 18; // 类二/类三买未实现（输出0），18 复用为线段中枢 ZD
-    pub const RESV19: usize = 19;
-    pub const RESV20: usize = 20;
+    /// 笔中枢起止（+1 = 中枢首根，-1 = 中枢末根）
+    ///
+    /// 供主图公式画「上下沿轨线 + 起止竖框」的干净中枢矩形。
+    /// 【为何不用 BACKSET】chan2zen/rust-chan 用 `BACKSET(BISE=2, ...)` 反推中枢区间，
+    /// 但 BACKSET 是未来函数，历史 bar 会随新数据重绘；这里由 DLL 直接给出无未来函数的标记。
+    pub const BI_ZS_EDGE: usize = 19;
+    /// 线段中枢起止（+1 = 中枢首根，-1 = 中枢末根）
+    pub const XD_ZS_EDGE: usize = 20;
 }
 
 /// 全部输出的计算结果
@@ -62,14 +68,20 @@ fn compute_all(bars: &[Bar]) -> Outputs {
     }
 
     // 2) 笔
+    //
+    // 【v2 修复】这里必须输出 windows(2) 的**两端点**。
+    // `build_strokes` 返回的是完整笔端点序列，相邻两点即构成一笔
+    // （tests/parity.rs 用同一 windows(2) 构造笔序列并与 chan.py 逐笔对齐可证），
+    // 旧实现只写了武端并 `let _ = a;` 丢弃文端 → 首笔起点缺失、主图第一笔画不出来。
     let fxs = collect_fractals(&ks);
     let eps = build_strokes(&ks, &fxs);
     for w in eps.windows(2) {
         let (a, b) = (w[0], w[1]);
-        let (bar, top, feat) = (ks[b.k].mark_bar, b.top, b.feat);
-        set(&mut o.data, mark::BI_MARK, bar, if top { 1.0 } else { -1.0 });
-        set(&mut o.data, mark::BI_PRICE, bar, feat as f32);
-        let _ = a;
+        for e in [a, b] {
+            let bar = ks[e.k].mark_bar;
+            set(&mut o.data, mark::BI_MARK, bar, if e.top { 1.0 } else { -1.0 });
+            set(&mut o.data, mark::BI_PRICE, bar, e.feat as f32);
+        }
     }
     let lines = strokes_to_lines(&ks, &eps);
 
@@ -83,6 +95,11 @@ fn compute_all(bars: &[Bar]) -> Outputs {
             set(&mut o.data, mark::BI_ZS_ZD, bar, p.zd as f32);
         }
         set(&mut o.data, mark::BI_ZS_START, s, 1.0);
+        // 起止标记：s==e 的退化中枢只留 +1，避免 -1 覆盖后公式认不出起点
+        set(&mut o.data, mark::BI_ZS_EDGE, s, 1.0);
+        if e > s {
+            set(&mut o.data, mark::BI_ZS_EDGE, e, -1.0);
+        }
     }
 
     // 4) 线段 + 线段中枢
@@ -113,6 +130,10 @@ fn compute_all(bars: &[Bar]) -> Outputs {
         for bar in s..=e {
             set(&mut o.data, mark::XD_ZS_ZG, bar, p.zg as f32);
             set(&mut o.data, mark::XD_ZS_ZD, bar, p.zd as f32);
+        }
+        set(&mut o.data, mark::XD_ZS_EDGE, s, 1.0);
+        if e > s {
+            set(&mut o.data, mark::XD_ZS_EDGE, e, -1.0);
         }
     }
 
@@ -250,8 +271,8 @@ calc_func!(calc_buy1, 15);
 calc_func!(calc_sell1, 16);
 calc_func!(calc_pz_beichi, 17);
 calc_func!(calc_xd_zs_zd, 18);
-calc_func!(calc_resv19, 19);
-calc_func!(calc_resv20, 20);
+calc_func!(calc_bi_zs_edge, 19);
+calc_func!(calc_xd_zs_edge, 20);
 
 const FUNC_COUNT: usize = 20;
 
@@ -295,8 +316,8 @@ static FUNC_TABLE: [PluginTCalcFuncInfo; FUNC_COUNT + 1] = [
     PluginTCalcFuncInfo { n_func_mark: 16, p_call_func: Some(calc_sell1) },
     PluginTCalcFuncInfo { n_func_mark: 17, p_call_func: Some(calc_pz_beichi) },
     PluginTCalcFuncInfo { n_func_mark: 18, p_call_func: Some(calc_xd_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 19, p_call_func: Some(calc_resv19) },
-    PluginTCalcFuncInfo { n_func_mark: 20, p_call_func: Some(calc_resv20) },
+    PluginTCalcFuncInfo { n_func_mark: 19, p_call_func: Some(calc_bi_zs_edge) },
+    PluginTCalcFuncInfo { n_func_mark: 20, p_call_func: Some(calc_xd_zs_edge) },
     PluginTCalcFuncInfo { n_func_mark: 0, p_call_func: None },
 ];
 
@@ -459,5 +480,150 @@ mod tests {
             f(0, out2.as_mut_ptr(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
             f(n as i32, std::ptr::null_mut(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
         }
+    }
+
+    // ---------------- v2 公式侧改动对应的回归测试 ----------------
+
+    /// 确定性合成行情：正弦漂移 + LCG 噪声随机游走（无外部依赖，CI 可复现）
+    fn synth_bars(n: usize) -> Vec<Bar> {
+        let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut rand01 = move || {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as f64) / ((1u64 << 31) as f64)
+        };
+        let mut v = Vec::with_capacity(n);
+        let mut price = 20.0f64;
+        for i in 0..n {
+            price += (i as f64 * 0.06).sin() * 0.35 + (rand01() - 0.5) * 0.8;
+            let (o, c) = (price, price + (rand01() - 0.5) * 0.6);
+            let hi = o.max(c) + rand01() * 0.5;
+            let lo = o.min(c) - rand01() * 0.5;
+            v.push(Bar { ts: i as i64, open: o, high: hi, low: lo, close: c });
+            price = c;
+        }
+        v
+    }
+
+    fn line(wen: usize, wu: usize, dir_up: bool, wf: f64, uf: f64) -> Line {
+        Line { wen, wu, dir_up, high: wf.max(uf), low: wf.min(uf), wen_feat: wf, wu_feat: uf }
+    }
+
+    /// 【回归】笔端点必须全部输出，含首笔文端（旧实现 `let _ = a;` 丢弃了它）
+    #[test]
+    fn bi_marks_include_first_endpoint() {
+        let bars = synth_bars(600);
+        let ks = merge_and_mark(&bars);
+        let fxs = collect_fractals(&ks);
+        let eps = build_strokes(&ks, &fxs);
+        assert!(eps.len() >= 6, "合成数据未产出足够笔端点: {}", eps.len());
+
+        let outs = compute_all(&bars);
+        let row = &outs.data[mark::BI_MARK - 1];
+        let marked = row.iter().filter(|v| **v != 0.0).count();
+        assert_eq!(marked, eps.len(), "笔端点未全部输出（首笔文端缺失）");
+
+        let first_bar = ks[eps[0].k].mark_bar;
+        assert_eq!(row[first_bar], if eps[0].top { 1.0 } else { -1.0 }, "首笔文端未标记");
+        assert_eq!(outs.data[mark::BI_PRICE - 1][first_bar], eps[0].feat as f32, "首笔文端价格缺失");
+    }
+
+    /// 【回归】笔中枢/线段中枢的起止标记（mark 19/20）必须与中枢区间一致
+    #[test]
+    fn pivot_edge_marks_match_pivots() {
+        let bars = synth_bars(700);
+        let outs = compute_all(&bars);
+        let ks = merge_and_mark(&bars);
+        let fxs = collect_fractals(&ks);
+        let eps = build_strokes(&ks, &fxs);
+        let lines = strokes_to_lines(&ks, &eps);
+        let pivots = build_pivots(&lines);
+
+        let edge = &outs.data[mark::BI_ZS_EDGE - 1];
+        let starts = edge.iter().filter(|v| **v == 1.0).count();
+        assert_eq!(starts, pivots.len(), "笔中枢首根标记数 != 中枢数");
+        for p in &pivots {
+            let (s, e) = (lines[p.start_li].wen, lines[p.end_li].wu);
+            assert_eq!(edge[s], 1.0, "中枢首根未标记: {s}");
+            if e > s {
+                // 相邻中枢首尾同 bar 时 +1 会覆盖 -1（绘制无影响），此处只要求非 0
+                assert_ne!(edge[e], 0.0, "中枢末根未标记: {e}");
+            }
+        }
+
+        // 线段中枢（标记数必须与中枢数一致；不假设样本一定产出中枢）
+        let segs = build_segments(&lines);
+        let seg_lines: Vec<Line> = segs
+            .iter()
+            .map(|s| Line {
+                wen: s.wen,
+                wu: s.wu,
+                dir_up: s.dir_up,
+                high: s.wen_feat.max(s.wu_feat),
+                low: s.wen_feat.min(s.wu_feat),
+                wen_feat: s.wen_feat,
+                wu_feat: s.wu_feat,
+            })
+            .collect();
+        let xd_pivots = build_pivots(&seg_lines);
+        let xd_edge = &outs.data[mark::XD_ZS_EDGE - 1];
+        let xd_starts = xd_edge.iter().filter(|v| **v == 1.0).count();
+        assert_eq!(xd_starts, xd_pivots.len(), "线段中枢首根标记数 != 中枢数");
+    }
+
+    /// 【回归】三买判定窗口：中枢结束时第 1 笔是「离开笔」、第 2 笔才是「回抽笔」，
+    /// 旧实现只查第 1 笔 → 永不触发；现应对齐 rust-chan 检查后 1~2 笔。
+    #[test]
+    fn buy3_detects_pullback_after_leave_stroke() {
+        let hist = vec![0.0f64; 40];
+        let pivot = Pivot { zg: 10.55, zd: 10.05, start_li: 0, end_li: 2, tbs: None };
+        let base = vec![
+            line(0, 5, true, 10.00, 10.60),
+            line(5, 9, false, 10.60, 10.05),
+            line(9, 13, true, 10.05, 10.55),
+        ];
+
+        // 正例：直查第 2 笔（离开笔 13→17 突破 ZG，回抽笔 17→21 最低 11.00 > ZG）
+        let mut ls = base.clone();
+        ls.push(line(13, 17, true, 10.50, 11.50));
+        ls.push(line(17, 21, false, 11.50, 11.00));
+        let mmds = detect_mmds(&ls, std::slice::from_ref(&pivot), &hist);
+        assert!(
+            mmds.iter().any(|m| m.bar == 21 && m.kind == Mmd::Buy3),
+            "三买未在第 2 笔回抽处触发: {:?}",
+            mmds
+        );
+
+        // 反例：第 1 笔为同向回抽但最低点落回中枢内 → 不应触发
+        let mut ls2 = base.clone();
+        ls2.push(line(13, 17, false, 10.50, 10.30));
+        let mmds2 = detect_mmds(&ls2, std::slice::from_ref(&pivot), &hist);
+        assert!(mmds2.is_empty(), "回抽进中枢不应出三买: {:?}", mmds2);
+
+        // 反例：第 1 笔既未离开中枢也未回抽 → 直接终止，不再看第 2 笔
+        let mut ls3 = base.clone();
+        ls3.push(line(13, 17, true, 10.05, 10.50));
+        ls3.push(line(17, 21, false, 10.50, 10.20));
+        let mmds3 = detect_mmds(&ls3, std::slice::from_ref(&pivot), &hist);
+        assert!(mmds3.is_empty(), "未离开中枢不应出三买: {:?}", mmds3);
+    }
+
+    /// 【回归】三卖为三买的镜像（反抽笔最高点 < ZD）
+    #[test]
+    fn sell3_detects_rebound_after_leave_stroke() {
+        let hist = vec![0.0f64; 40];
+        let pivot = Pivot { zg: 10.55, zd: 10.05, start_li: 0, end_li: 2, tbs: None };
+        let ls = vec![
+            line(0, 5, true, 10.00, 10.60),
+            line(5, 9, false, 10.60, 10.05),
+            line(9, 13, true, 10.05, 10.55),
+            line(13, 17, false, 10.50, 9.00), // 向下离开 ZD
+            line(17, 21, true, 9.00, 9.60),   // 反抽最高 9.60 < ZD 10.05
+        ];
+        let mmds = detect_mmds(&ls, std::slice::from_ref(&pivot), &hist);
+        assert!(
+            mmds.iter().any(|m| m.bar == 21 && m.kind == Mmd::Sell3),
+            "三卖未在第 2 笔反抽处触发: {:?}",
+            mmds
+        );
     }
 }
