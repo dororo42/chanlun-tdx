@@ -5,3 +5,6 @@
 __pycache__/
 *.pyc
 .venv/
+REPORT.md
+handoffs/
+tests/dbg.rs

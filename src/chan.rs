@@ -716,7 +716,7 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
                 // 且反向笔突破前段终点方向的极值 → 撤销末段并入前段，前段延至突破极值处。
                 // 例：zigzag (459,524)+(524,568) → bi32 低 117.34 无突破……实际突破=bi32? 
                 // py 日志确认触发=缺口突破：段(524,568) 老阴、反向笔(591→599) 高 133.67>段高 133.52。
-                let mut merged = false;
+                let mut merged_ok = false;
                 if segs.len() >= 2 && prev_gap {
                     // 前段处于老阳/老阴链：其产生时继承的终止间隔缺口 = prev_gap
                     let prev = segs.last().unwrap();
@@ -736,52 +736,41 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
                     if breakthrough {
                         // 重扫前段起点：合并后不得出现更晚的新终止（否则前段原终止有效，非突破）
                         let view_chk: Vec<usize> = (prev.start_bi..bis.len()).collect();
-                        if let Some((chk_end, _, _)) = scan_features(bis, &view_chk, prev.dir_up, false).terminated {
-                            if chk_end > prev.end_bi && chk_end < bis.len() - 1 {
-                                // 原终止仍成立 → 不合并
-                                segs.push(Segment {
-                                    dir_up,
-                                    wen: bis[i].wen,
-                                    wu: bis[best].wu,
-                                    wen_feat: bis[i].wen_feat,
-                                    wu_feat: bis[best].wu_feat,
-                                    start_bi: i,
-                                    end_bi: bis.len() - 1,
-                                });
-                                break;
+                        let new_term = scan_features(bis, &view_chk, prev.dir_up, false).terminated;
+                        let prev_still_valid = match new_term {
+                            Some((chk_end, _, _)) => chk_end > prev.end_bi && chk_end < bis.len() - 1,
+                            None => false,
+                        };
+                        if !prev_still_valid {
+                            // 前段基础序列 += 被撤段基础序列，重新刷新（L5742-5753）
+                            let popped = segs.pop().unwrap();
+                            let new_start = popped.start_bi;
+                            let new_dir = popped.dir_up;
+                            // 合并后的段终点 = 段方向上的极值端（在突破笔之前）——
+                            // py 语义：前段基础序列 += 被撤段基础序列，武随极值刷新（L5284 武斗）。
+                            // 突破笔(反向) 不改变方向极值，故终点 = 到突破笔文端前的方向极值。
+                            let mut bk = new_start;
+                            for k in new_start..bis.len() {
+                                let (v, bv) = (bis[k].wu_feat, bis[bk].wu_feat);
+                                if (new_dir && v > bv) || (!new_dir && v < bv) {
+                                    bk = k;
+                                }
                             }
+                            segs.push(Segment {
+                                dir_up: new_dir,
+                                wen: bis[new_start].wen,
+                                wu: bis[bk].wu,
+                                wen_feat: bis[new_start].wen_feat,
+                                wu_feat: bis[bk].wu_feat,
+                                start_bi: new_start,
+                                end_bi: bis.len() - 1,
+                            });
+                            merged_ok = true;
                         }
-                        let popped = segs.pop().unwrap();
-                        let new_start = popped.start_bi;
-                        let new_dir = popped.dir_up;
-                        // 前段延伸终点 = 突破笔反向极值处的"文端"（=末段文端所在笔的极值端）
-                        // 精确语义（L5742-5753）：前段基础序列 += 被撤段基础序列，重新刷新。
-                        let view2: Vec<usize> = (new_start..bis.len()).collect();
-                        let scan2 = scan_features(bis, &view2, new_dir, false);
-                        // 合并后的段终点 = 段方向上的极值端（在突破笔之前）——
-                        // py 语义：前段基础序列 += 被撤段基础序列，武随极值刷新（L5284 武斗）。
-                        // 突破笔(反向) 不改变方向极值，故终点 = 到突破笔文端前的方向极值。
-                        let mut bk = new_start;
-                        for k in new_start..bis.len() {
-                            let (v, bv) = (bis[k].wu_feat, bis[bk].wu_feat);
-                            if (new_dir && v > bv) || (!new_dir && v < bv) {
-                                bk = k;
-                            }
-                        }
-                        segs.push(Segment {
-                            dir_up: new_dir,
-                            wen: bis[new_start].wen,
-                            wu: bis[bk].wu,
-                            wen_feat: bis[new_start].wen_feat,
-                            wu_feat: bis[bk].wu_feat,
-                            start_bi: new_start,
-                            end_bi: bis.len() - 1,
-                        });
-                        merged = true;
-                        break;
+                        // 原终止仍成立 → 不合并，按正常尾段处理（落到下方 !merged_ok 分支）
                     }
                 }
-                if !merged {
+                if !merged_ok {
                     segs.push(Segment {
                         dir_up,
                         wen: bis[i].wen,

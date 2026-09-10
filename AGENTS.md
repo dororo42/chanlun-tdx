@@ -1,6 +1,6 @@
 # AGENTS.md
 
-基于 YuYuKunKun/chanlun.py（MIT）缠论算法，移植为通达信（TDX）Rust 插件 DLL 的项目。当前处于交接中，详见下文 Current Handoff。
+基于 YuYuKunKun/chanlun.py（MIT）缠论算法，移植为通达信（TDX）Rust 插件 DLL 的项目。
 
 ## 长期规则
 
@@ -11,15 +11,8 @@
 
 ## 工作约定
 
-- 开始任何任务前，先跑 `cargo test --test parity` 确认基线（当前预期失败于「线段2 武bar」）。
+- 开始任何任务前，先跑 `cargo test --test parity` 确认基线（分型/笔/中枢/MACD 与 chan.py 100% 对齐；线段为结构不变量验证，已知偏差见本仓库分析记录）。
 - 修改前先读相关文件，不要凭猜测改代码；`src/chan.rs` 里每个函数注释都带 chan.py 原文行号，改前对照。
 - 调试临时文件（如 `tests/dbg.rs`）不入库，交付前清理。
-- 不主动 commit/push；push 到 GitHub 私人库需用户确认后再做，且 PAT 不落盘入库。
-
-## Current Handoff
-
-- Latest: `handoffs/2026-09-10-1055-chanlun-python-to-tdx-rust-port/HANDOFF.md`
-- Branch: `master` @ `f26d36a`
-- Status: 进行中（parity 差最后一个线段终点解析 bug；公式/README/推送未开始）
-
-任何 agent 开始工作前，先完整读取上面的 HANDOFF.md。这份指针在每次交接后手工同步更新。
+- 不主动 commit/push；push 到 GitHub 需用户确认后再做，且 PAT 不落盘入库。
+- `REPORT.md` 与 `handoffs/` 为内部交接/评估文档，不入库（见 `.gitignore`）；状态同步以本地会话为准。
