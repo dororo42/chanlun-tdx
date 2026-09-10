@@ -1,0 +1,75 @@
+{通达信·缠论主图显示公式}
+{依赖 DLL: chanlun_tdx.dll 绑定到 TDXDLL1}
+{功能: 分型标记/笔/线段/中枢/买卖点 全部叠加在主图上}
+{使用: 功能→公式系统→公式管理器→技术指标公式→新建→粘贴→确认}
+
+{--- 缠论结构 ---}
+FX:=TDXDLL1(1,HIGH,LOW,CLOSE);          {分型标记: 1=顶, -1=底}
+FXP:=TDXDLL1(2,HIGH,LOW,CLOSE);          {分型价格}
+BI:=TDXDLL1(3,HIGH,LOW,CLOSE);           {笔端点标记: 1=上笔端(顶), -1=下笔端(底)}
+BIP:=TDXDLL1(4,HIGH,LOW,CLOSE);          {笔端点价格}
+BZG:=TDXDLL1(5,HIGH,LOW,CLOSE);          {笔中枢上沿 ZG}
+BZD:=TDXDLL1(6,HIGH,LOW,CLOSE);          {笔中枢下沿 ZD}
+XDD:=TDXDLL1(8,HIGH,LOW,CLOSE);          {线段端点标记}
+XDP:=TDXDLL1(9,HIGH,LOW,CLOSE);          {线段端点价格}
+XZG:=TDXDLL1(10,HIGH,LOW,CLOSE);         {线段中枢 ZG}
+XZD:=TDXDLL1(18,HIGH,LOW,CLOSE);         {线段中枢 ZD}
+
+{--- 买卖点 ---}
+B1:=TDXDLL1(15,HIGH,LOW,CLOSE);          {一买}
+S1:=TDXDLL1(16,HIGH,LOW,CLOSE);          {一卖}
+B2:=TDXDLL1(13,HIGH,LOW,CLOSE);          {二买}
+S2:=TDXDLL1(14,HIGH,LOW,CLOSE);          {二卖}
+B3:=TDXDLL1(11,HIGH,LOW,CLOSE);          {三买}
+S3:=TDXDLL1(12,HIGH,LOW,CLOSE);          {三卖}
+PZ:=TDXDLL1(17,HIGH,LOW,CLOSE);          {盘整背驰}
+
+{--- 分型标记（小圆点）---}
+顶分型: FX=1, NODRAW;
+底分型: FX=-1, NODRAW;
+DRAWICON(FX=1,FXP*1.003,2);              {顶分型: 绿色下箭头}
+DRAWICON(FX=-1,FXP*0.997,1);             {底分型: 红色上箭头}
+
+{--- 笔（线段连接）---}
+上笔端: BI=1, NODRAW;
+下笔端: BI=-1, NODRAW;
+DRAWLINE(BI=1,BIP,BI=-1,BIP,0), COLORRED, LINETHICK2;  {上行笔: 红}
+DRAWLINE(BI=-1,BIP,BI=1,BIP,0), COLORGREEN, LINETHICK2; {下行笔: 绿}
+
+{--- 笔中枢（矩形区域）---}
+BZG1: BZG>0, NODRAW;
+BZD1: BZD>0, NODRAW;
+STICKLINE(BZG>0,BZG,BZD,8,0), COLOR00FF00, DOTLINE;    {笔中枢: 灰色虚线区域}
+
+{--- 线段（粗线段连接）---}
+段顶: XDD=1, NODRAW;
+段底: XDD=-1, NODRAW;
+DRAWLINE(XDD=1,XDP,XDD=-1,XDP,0), COLORMAGENTA, LINETHICK3;   {上行线段: 品红粗线}
+DRAWLINE(XDD=-1,XDP,XDD=1,XDP,0), COLORBLUE, LINETHICK3;      {下行线段: 蓝色粗线}
+
+{--- 线段中枢 ---}
+XZG1: XZG>0, NODRAW;
+XZD1: XZD>0, NODRAW;
+STICKLINE(XZG>0,XZG,XZD,12,0), COLORFF00FF, DOTLINE;   {线段中枢: 紫色虚线区域}
+
+{--- 买卖点标记 ---}
+{一买: 橙色上箭头}
+DRAWICON(B1>0,LOW*0.98,1), COLORYELLOW;
+DRAWTEXT(B1>0,LOW*0.975,'一买'), COLORYELLOW;
+{一卖: 橙色下箭头}
+DRAWICON(S1>0,HIGH*1.02,2), COLORYELLOW;
+DRAWTEXT(S1>0,HIGH*1.025,'一卖'), COLORYELLOW;
+{二买: 红色上箭头}
+DRAWICON(B2>0,LOW*0.98,1), COLORRED;
+DRAWTEXT(B2>0,LOW*0.975,'二买'), COLORRED;
+{二卖: 绿色下箭头}
+DRAWICON(S2>0,HIGH*1.02,2), COLORGREEN;
+DRAWTEXT(S2>0,HIGH*1.025,'二卖'), COLORGREEN;
+{三买: 紫色上箭头}
+DRAWICON(B3>0,LOW*0.98,1), COLORMAGENTA;
+DRAWTEXT(B3>0,LOW*0.975,'三买'), COLORMAGENTA;
+{三卖: 蓝色下箭头}
+DRAWICON(S3>0,HIGH*1.02,2), COLORBLUE;
+DRAWTEXT(S3>0,HIGH*1.025,'三卖'), COLORBLUE;
+{盘整背驰: 白色文字}
+DRAWTEXT(PZ>0,HIGH*1.03,'背'), COLORWHITE;
