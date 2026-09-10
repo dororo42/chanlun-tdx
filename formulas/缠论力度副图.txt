@@ -1,0 +1,49 @@
+{==========================================================================}
+{ 通达信 · 缠论力度副图  v2.0                                               }
+{                                                                          }
+{ DLL   : chanlun_tdx.dll → 绑定到 TDXDLL1（slot 1）                        }
+{ 类型  : 技术指标公式 → 副图                                               }
+{ 用途  : 观察「笔 / 段」的幅度、天数、力度衰减（背驰），用于人工复核主图与    }
+{         选股结果。力度 = 幅度 / 天数 × 100，量纲已做时间归一，笔段可比。     }
+{ 口径  : 与 chan2zen/rust-chan 一致 —— 当前笔（段）与「上一个同向笔（段）」   }
+{         比较：天数没缩短而幅度或力度变小，即为背驰。                        }
+{ 副图线 : 笔力度(品红)、段力度(橙)、前笔力度(灰虚)、前段力度(棕虚)、零轴       }
+{ 数据窗口可见（NODRAW）: 笔幅度 / 笔天数 / 段幅度 / 段天数                    }
+{==========================================================================}
+
+{================ 1. DLL 结构数据 ================}
+BI  :=TDXDLL1(3,HIGH,LOW,CLOSE);       {笔端点：1=顶, -1=底}
+BIP :=TDXDLL1(4,HIGH,LOW,CLOSE);       {笔端点价格}
+XDM :=TDXDLL1(8,HIGH,LOW,CLOSE);       {线段端点：1=顶, -1=底}
+XDP :=TDXDLL1(9,HIGH,LOW,CLOSE);       {线段端点价格}
+
+{================ 2. 笔：幅度 / 天数 / 力度 ================}
+PBI1:=REF(BI,1)<>0;
+NBI1:=BARSLAST(PBI1)+1;                        {到上一个笔端点的距离}
+NBI2:=REF(BARSLAST(PBI1),NBI1)+NBI1+1;         {到上上个笔端点的距离}
+BIOK:=BI<>0 AND NBI1>0 AND NBI1<BARSCOUNT(C) AND NBI2<BARSCOUNT(C);
+笔幅度:IF(BIOK,ABS(BIP-REF(BIP,NBI1)),DRAWNULL),NODRAW;
+笔天数:IF(BIOK,NBI1,DRAWNULL),NODRAW;
+前笔幅度:=IF(BIOK,REF(笔幅度,NBI2),DRAWNULL);
+前笔天数:=IF(BIOK,REF(笔天数,NBI2),DRAWNULL);
+笔力度:IF(BIOK,笔幅度/笔天数*100,DRAWNULL),COLORMAGENTA,LINETHICK2;
+前笔力度:IF(BIOK,前笔幅度/前笔天数*100,DRAWNULL),COLORGRAY,DOTLINE;
+笔背离:=BIOK AND 笔天数>=前笔天数 AND (笔幅度<前笔幅度 OR 笔力度<前笔力度);
+
+{================ 3. 段：幅度 / 天数 / 力度 ================}
+PXD1:=REF(XDM,1)<>0;
+NXD1:=BARSLAST(PXD1)+1;
+NXD2:=REF(BARSLAST(PXD1),NXD1)+NXD1+1;
+XDOK:=XDM<>0 AND NXD1>0 AND NXD1<BARSCOUNT(C) AND NXD2<BARSCOUNT(C);
+段幅度:IF(XDOK,ABS(XDP-REF(XDP,NXD1)),DRAWNULL),NODRAW;
+段天数:IF(XDOK,NXD1,DRAWNULL),NODRAW;
+前段幅度:=IF(XDOK,REF(段幅度,NXD2),DRAWNULL);
+前段天数:=IF(XDOK,REF(段天数,NXD2),DRAWNULL);
+段力度:IF(XDOK,段幅度/段天数*100,DRAWNULL),COLORFF8000,LINETHICK2;
+前段力度:IF(XDOK,前段幅度/前段天数*100,DRAWNULL),COLORBROWN,DOTLINE;
+段背离:=XDOK AND 段天数>=前段天数 AND (段幅度<前段幅度 OR 段力度<前段力度);
+
+{================ 4. 零轴与背驰图标 ================}
+零轴:0,COLORGRAY,DOTLINE;
+DRAWICON(笔背离,笔力度,31);
+DRAWICON(段背离,段力度,32);

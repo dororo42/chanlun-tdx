@@ -1,32 +1,101 @@
-{通达信·缠论条件选股公式}
-{ DLL: chanlun_tdx.dll → 绑定到 TDXDLL1 }
-{ 公式类型: 条件选股公式 }
-{ 用法: 公式管理器 → 新建 → 类型选"条件选股" → 粘贴 → 确认 }
-{      然后选股器中选用本公式 → 执行选股 }
+{==========================================================================}
+{ 通达信 · 缠论条件选股  v2.0                                               }
+{                                                                          }
+{ DLL   : chanlun_tdx.dll → 绑定到 TDXDLL1（slot 1）                        }
+{ 类型  : 条件选股公式                                                      }
+{ 前置  : 需 v2.0 以上的 DLL（v1 的三买/三卖判定窗口过窄，几乎不出信号）       }
+{ 默认口径: 最近 N 根内出现「二买 或 三买」+ 笔/段力度背驰 + 走势未被卖点破坏  }
+{                                                                          }
+{ 相对 v1 的改进                                                            }
+{   1. v1 用 COUNT(信号,20)>0：20 天前出二买、之后已经走出一卖的票照样入选。   }
+{      本版改为「时效(N 根内) + 未被反向卖点破坏」两段判定，思路来自          }
+{      chan2zen/rust-chan 的 BARSLAST(SIG=2) 比较法。                        }
+{   2. 叠加笔/段力度背驰过滤，剔除「有买点但力度未衰竭」的追高票。            }
+{   3. 增加基础过滤（次新股 / ST / 停牌 / 无数据）。                          }
+{   注意  : 若公式编译报「NAMELIKE 未定义」，删掉基础OK 里的 NOT(NAMELIKE('ST')) }
+{           一段即可（或把 FLT 置 0）。                                      }
+{==========================================================================}
 
-{=== 买卖点信号 ===}
-B1:=TDXDLL1(15,HIGH,LOW,CLOSE)>0;
-B2:=TDXDLL1(13,HIGH,LOW,CLOSE)>0;
-B3:=TDXDLL1(11,HIGH,LOW,CLOSE)>0;
-PZ:=TDXDLL1(17,HIGH,LOW,CLOSE)>0;
+{---------------- 参数 ----------------}
+N  :=7;      {信号时效：最近 N 根K线内（可改 3 / 5 / 10）}
+MBS:=120;    {最少上市交易日，排除次新股；设 0 关闭}
+FLT:=1;      {基础过滤开关：1=开}
 
-{--- 信号窗口 N = 最近N根K线内出现信号即选出 ---}
-{默认: 二买或三买（稳健型）}
-XG:COUNT(B2,20)>0 OR COUNT(B3,20)>0;
+{================ 1. DLL 结构数据 ================}
+BI  :=TDXDLL1(3,HIGH,LOW,CLOSE);       {笔端点：1=顶, -1=底}
+BIP :=TDXDLL1(4,HIGH,LOW,CLOSE);       {笔端点价格}
+XDM :=TDXDLL1(8,HIGH,LOW,CLOSE);       {线段端点：1=顶, -1=底}
+XDP :=TDXDLL1(9,HIGH,LOW,CLOSE);       {线段端点价格}
+B1V :=TDXDLL1(15,HIGH,LOW,CLOSE)>0;    {一买}
+S1V :=TDXDLL1(16,HIGH,LOW,CLOSE)>0;    {一卖}
+B2V :=TDXDLL1(13,HIGH,LOW,CLOSE)>0;    {二买}
+S2V :=TDXDLL1(14,HIGH,LOW,CLOSE)>0;    {二卖}
+B3V :=TDXDLL1(11,HIGH,LOW,CLOSE)>0;    {三买}
+S3V :=TDXDLL1(12,HIGH,LOW,CLOSE)>0;    {三卖}
+PZV :=TDXDLL1(17,HIGH,LOW,CLOSE)>0;    {盘整背驰}
 
-{扩展条件（按需替换上方XG行后取消注释）:}
+{================ 2. 笔 / 段 力度背驰（与主图公式同口径） ================}
+PBI1:=REF(BI,1)<>0;
+NBI1:=BARSLAST(PBI1)+1;
+NBI2:=REF(BARSLAST(PBI1),NBI1)+NBI1+1;
+BIOK:=BI<>0 AND NBI1>0 AND NBI1<BARSCOUNT(C) AND NBI2<BARSCOUNT(C);
+笔幅度:=IF(BIOK,ABS(BIP-REF(BIP,NBI1)),DRAWNULL);
+笔天数:=IF(BIOK,NBI1,DRAWNULL);
+前笔幅度:=IF(BIOK,REF(笔幅度,NBI2),DRAWNULL);
+前笔天数:=IF(BIOK,REF(笔天数,NBI2),DRAWNULL);
+笔力度:=IF(BIOK,笔幅度/笔天数*100,DRAWNULL);
+前笔力度:=IF(BIOK,前笔幅度/前笔天数*100,DRAWNULL);
+笔背离:=BIOK AND 笔天数>=前笔天数 AND (笔幅度<前笔幅度 OR 笔力度<前笔力度);
 
-{条件A: 三买——趋势延续型}
-{XG:COUNT(B3,20)>0;}
+PXD1:=REF(XDM,1)<>0;
+NXD1:=BARSLAST(PXD1)+1;
+NXD2:=REF(BARSLAST(PXD1),NXD1)+NXD1+1;
+XDOK:=XDM<>0 AND NXD1>0 AND NXD1<BARSCOUNT(C) AND NXD2<BARSCOUNT(C);
+段幅度:=IF(XDOK,ABS(XDP-REF(XDP,NXD1)),DRAWNULL);
+段天数:=IF(XDOK,NXD1,DRAWNULL);
+前段幅度:=IF(XDOK,REF(段幅度,NXD2),DRAWNULL);
+前段天数:=IF(XDOK,REF(段天数,NXD2),DRAWNULL);
+段力度:=IF(XDOK,段幅度/段天数*100,DRAWNULL);
+前段力度:=IF(XDOK,前段幅度/前段天数*100,DRAWNULL);
+段背离:=XDOK AND 段天数>=前段天数 AND (段幅度<前段幅度 OR 段力度<前段力度);
 
-{条件B: 二买——回调企稳型}
-{XG:COUNT(B2,20)>0;}
+{================ 3. 信号时效 + 走势未被破坏 ================}
+{ SUM(...,0) 判断「历史上是否出现过」——BARSLAST 在从未出现时返回 0，     }
+{ 若不判存在性，会把「从未出过二买」误判成「今天刚出二买」                  }
+HASB1:=SUM(B1V,0)>0; HASB2:=SUM(B2V,0)>0; HASB3:=SUM(B3V,0)>0;
+HASS1:=SUM(S1V,0)>0; HASS2:=SUM(S2V,0)>0; HASS3:=SUM(S3V,0)>0;
+HASBB:=SUM(笔背离,0)>0; HASXB:=SUM(段背离,0)>0;
 
-{条件C: 一买——抄底型（风险较高）}
-{XG:COUNT(B1,20)>0;}
+DB1:=BARSLAST(B1V); DB2:=BARSLAST(B2V); DB3:=BARSLAST(B3V);
+DS1:=BARSLAST(S1V); DS2:=BARSLAST(S2V); DS3:=BARSLAST(S3V);
+DBC:=BARSLAST(笔背离); DXC:=BARSLAST(段背离);
 
-{条件D: 一买+盘整背驰共振（强信号）}
-{XG:COUNT(B1,20)>0 AND COUNT(PZ,20)>0;}
+新二买:=HASB2 AND DB2<N;
+新三买:=HASB3 AND DB3<N;
+新背驰:=(HASBB AND DBC<N) OR (HASXB AND DXC<N);
 
-{条件E: 全部买入信号（宽口径）}
-{XG:COUNT(B1,20)>0 OR COUNT(B2,20)>0 OR COUNT(B3,20)>0;}
+{ 买点之后未出现反向卖点 → 该买点的走势结构仍然有效 }
+未破B2:=新二买 AND (NOT HASS1 OR DS1>DB2) AND (NOT HASS2 OR DS2>DB2) AND (NOT HASS3 OR DS3>DB2);
+未破B3:=新三买 AND (NOT HASS1 OR DS1>DB3) AND (NOT HASS2 OR DS2>DB3) AND (NOT HASS3 OR DS3>DB3);
+
+{================ 4. 基础过滤 ================}
+基础OK:=FLT=0 OR (BARSCOUNT(C)>MBS AND C>0 AND V>0 AND NOT(NAMELIKE('ST')));
+
+{================ 5. 选股条件 ================}
+XG:(未破B2 OR 未破B3) AND 新背驰 AND 基础OK;
+
+{---------------- 备选口径：注释掉上面的 XG 行，取消下面一行注释即可 ----------------}
+{ 仅三买（趋势延续，信号最少最干净）}
+{ XG:未破B3 AND 新背驰 AND 基础OK;}
+{ 二买/三买，不加背驰过滤（宽口径，票多）}
+{ XG:(未破B2 OR 未破B3) AND 基础OK;}
+{ 当根同时出现二三买共振（对应 rust-chan 的 SIG=23）}
+{ XG:B2V AND B3V AND 基础OK;}
+{ 更严：力度背驰必须与买点同根}
+{ XG:(未破B2 OR 未破B3) AND 笔背离 AND 基础OK;}
+{ 一买 + 盘整背驰共振（抄底，风险最高）}
+{ XG:HASB1 AND DB1<N AND SUM(PZV,0)>0 AND BARSLAST(PZV)<N AND 基础OK;}
+{ 一二三买全口径（宽）}
+{ XG:((HASB1 AND DB1<N) OR 未破B2 OR 未破B3) AND 基础OK;}
+{ 只看中枢：最近 N 根内出现三买且其后无卖点（等价于仅三买）}
+{ XG:未破B3 AND 基础OK;}

@@ -1,58 +1,117 @@
-{通达信·缠论主图叠加显示公式}
-{ DLL: chanlun_tdx.dll → 绑定到 TDXDLL1 }
-{ 公式类型: 技术指标公式 → 主图叠加 }
-{ 用法: 公式管理器 → 新建 → 类型选"主图叠加" → 粘贴 → 确认 }
+{==========================================================================}
+{ 通达信 · 缠论主图叠加显示  v2.0                                           }
+{                                                                          }
+{ DLL   : chanlun_tdx.dll → 绑定到 TDXDLL1（slot 1）                        }
+{ 类型  : 技术指标公式 → 主图叠加                                           }
+{ 前置  : 需 v2.0 以上的 DLL。mark 19/20 为 v2.0 新增：用旧 DLL 只会得到 0， }
+{         中枢仍能画上下沿轨线，只是没有起止竖框。                            }
+{ 口径  : 分型/笔/线段/中枢/买卖点来自 DLL（chan.py 移植，见 docs/semantics.md）}
+{         笔与段的力度背驰为公式侧计算，口径参考 chan2zen/rust-chan。          }
+{ 相对 v1 的改进                                                            }
+{   1. 中枢不再用「宽度8实心灰柱」填满区间（v1 会糊住K线），改为            }
+{      上下沿轨线 + 起止竖框（思路同 rust-chan）；                            }
+{   2. 顶底/买卖点文字按类别错位排列，不再堆在同一价位；                      }
+{      二三买(卖)共振单独标注，对应 rust-chan 的 23 号信号；                   }
+{   3. 补上首笔：v1 的 DLL 丢了首笔文端，第一笔根本画不出来；                   }
+{   4. 新增笔/段力度背驰图标（v1 只有盘整背驰一个标记）；                      }
+{   5. 已避开 BACKSET 未来函数 —— 中枢区间由 DLL 的 mark 19/20 直接给出。      }
+{==========================================================================}
 
-{=== 缠论结构数据（DLL 输出）===}
-FX:=TDXDLL1(1,HIGH,LOW,CLOSE);
-FXP:=TDXDLL1(2,HIGH,LOW,CLOSE);
-BI:=TDXDLL1(3,HIGH,LOW,CLOSE);
-BIP:=TDXDLL1(4,HIGH,LOW,CLOSE);
-BZG:=TDXDLL1(5,HIGH,LOW,CLOSE);
-BZD:=TDXDLL1(6,HIGH,LOW,CLOSE);
-XDD:=TDXDLL1(8,HIGH,LOW,CLOSE);
-XDP:=TDXDLL1(9,HIGH,LOW,CLOSE);
-XZG:=TDXDLL1(10,HIGH,LOW,CLOSE);
-XZD:=TDXDLL1(18,HIGH,LOW,CLOSE);
+{---------------- 显示开关：0 = 关闭, 1 = 开启 ----------------}
+SHOW_FX :=0;    {分型标记（数量多，默认关闭）}
+SHOW_BI :=1;    {笔：红=上笔, 绿=下笔（虚线，同 rust-chan 的 DOTLINE）}
+SHOW_BZS:=1;    {笔中枢：棕色上下沿 + 起止竖框}
+SHOW_XD :=1;    {线段：橙=上段, 蓝=下段（粗线）}
+SHOW_XZS:=0;    {线段中枢（常与笔中枢重叠，默认关闭）}
+SHOW_MMD:=1;    {买卖点文字}
+SHOW_BC :=1;    {力度背驰 / 盘整背驰 图标}
 
-{=== 买卖点信号 ===}
-B1V:=TDXDLL1(15,HIGH,LOW,CLOSE);
-S1V:=TDXDLL1(16,HIGH,LOW,CLOSE);
-B2V:=TDXDLL1(13,HIGH,LOW,CLOSE);
-S2V:=TDXDLL1(14,HIGH,LOW,CLOSE);
-B3V:=TDXDLL1(11,HIGH,LOW,CLOSE);
-S3V:=TDXDLL1(12,HIGH,LOW,CLOSE);
-PZV:=TDXDLL1(17,HIGH,LOW,CLOSE);
+{================ 1. DLL 结构数据 ================}
+FXM  :=TDXDLL1(1,HIGH,LOW,CLOSE);      {分型标记：1=顶, -1=底}
+FXP  :=TDXDLL1(2,HIGH,LOW,CLOSE);      {分型价格}
+BI   :=TDXDLL1(3,HIGH,LOW,CLOSE);      {笔端点：1=顶, -1=底}
+BIP  :=TDXDLL1(4,HIGH,LOW,CLOSE);      {笔端点价格}
+BZG  :=TDXDLL1(5,HIGH,LOW,CLOSE);      {笔中枢上沿 ZG}
+BZD  :=TDXDLL1(6,HIGH,LOW,CLOSE);      {笔中枢下沿 ZD}
+BZSE :=TDXDLL1(19,HIGH,LOW,CLOSE);     {笔中枢起止：+1=首根, -1=末根【v2 新增】}
+XDM  :=TDXDLL1(8,HIGH,LOW,CLOSE);      {线段端点：1=顶, -1=底}
+XDP  :=TDXDLL1(9,HIGH,LOW,CLOSE);      {线段端点价格}
+XZG  :=TDXDLL1(10,HIGH,LOW,CLOSE);     {线段中枢上沿}
+XZD  :=TDXDLL1(18,HIGH,LOW,CLOSE);     {线段中枢下沿}
+XZSE :=TDXDLL1(20,HIGH,LOW,CLOSE);     {线段中枢起止【v2 新增】}
 
-{=== 分型标记 ===}
-DRAWICON(FX=1,FXP,2);
-DRAWICON(FX=-1,FXP,1);
+{================ 2. 买卖点信号 ================}
+B1V:=TDXDLL1(15,HIGH,LOW,CLOSE)>0;     {一买：趋势背驰}
+S1V:=TDXDLL1(16,HIGH,LOW,CLOSE)>0;     {一卖}
+B2V:=TDXDLL1(13,HIGH,LOW,CLOSE)>0;     {二买}
+S2V:=TDXDLL1(14,HIGH,LOW,CLOSE)>0;     {二卖}
+B3V:=TDXDLL1(11,HIGH,LOW,CLOSE)>0;     {三买}
+S3V:=TDXDLL1(12,HIGH,LOW,CLOSE)>0;     {三卖}
+PZV:=TDXDLL1(17,HIGH,LOW,CLOSE)>0;     {盘整背驰}
+B23:=B2V AND B3V;                      {二三买共振（= rust-chan 的 SIG=23）}
+S23:=S2V AND S3V;                      {二三卖共振}
 
-{=== 笔（红=上笔, 绿=下笔）===}
-DRAWLINE(BI=-1,BIP,BI=1,BIP,0),COLORRED,LINETHICK1;
-DRAWLINE(BI=1,BIP,BI=-1,BIP,0),COLORGREEN,LINETHICK1;
+{================ 3. 笔 / 段 力度背驰（公式侧计算） ================}
+{ 口径：与「上一个同向笔（段）」比较 —— 天数不缩短而幅度或力度衰减，即为背驰 }
+PBI1:=REF(BI,1)<>0;
+NBI1:=BARSLAST(PBI1)+1;                        {到上一个笔端点的距离}
+NBI2:=REF(BARSLAST(PBI1),NBI1)+NBI1+1;         {到上上个笔端点的距离}
+BIOK:=BI<>0 AND NBI1>0 AND NBI1<BARSCOUNT(C) AND NBI2<BARSCOUNT(C);
+笔幅度:=IF(BIOK,ABS(BIP-REF(BIP,NBI1)),DRAWNULL);
+笔天数:=IF(BIOK,NBI1,DRAWNULL);
+前笔幅度:=IF(BIOK,REF(笔幅度,NBI2),DRAWNULL);
+前笔天数:=IF(BIOK,REF(笔天数,NBI2),DRAWNULL);
+笔力度:=IF(BIOK,笔幅度/笔天数*100,DRAWNULL);
+前笔力度:=IF(BIOK,前笔幅度/前笔天数*100,DRAWNULL);
+笔背离:=BIOK AND 笔天数>=前笔天数 AND (笔幅度<前笔幅度 OR 笔力度<前笔力度);
 
-{=== 笔中枢（灰色框）===}
-STICKLINE(BZG>0,BZG,BZD,8,0),COLOR404040;
+PXD1:=REF(XDM,1)<>0;
+NXD1:=BARSLAST(PXD1)+1;
+NXD2:=REF(BARSLAST(PXD1),NXD1)+NXD1+1;
+XDOK:=XDM<>0 AND NXD1>0 AND NXD1<BARSCOUNT(C) AND NXD2<BARSCOUNT(C);
+段幅度:=IF(XDOK,ABS(XDP-REF(XDP,NXD1)),DRAWNULL);
+段天数:=IF(XDOK,NXD1,DRAWNULL);
+前段幅度:=IF(XDOK,REF(段幅度,NXD2),DRAWNULL);
+前段天数:=IF(XDOK,REF(段天数,NXD2),DRAWNULL);
+段力度:=IF(XDOK,段幅度/段天数*100,DRAWNULL);
+前段力度:=IF(XDOK,前段幅度/前段天数*100,DRAWNULL);
+段背离:=XDOK AND 段天数>=前段天数 AND (段幅度<前段幅度 OR 段力度<前段力度);
 
-{=== 线段（品红/蓝色粗线）===}
-DRAWLINE(XDD=-1,XDP,XDD=1,XDP,0),COLORMAGENTA,LINETHICK3;
-DRAWLINE(XDD=1,XDP,XDD=-1,XDP,0),COLORBLUE,LINETHICK3;
+{================ 4. 分型标记（默认关闭） ================}
+DRAWICON(SHOW_FX=1 AND FXM=1,FXP,2);
+DRAWICON(SHOW_FX=1 AND FXM=-1,FXP,1);
 
-{=== 线段中枢（橙色框）===}
-STICKLINE(XZG>0,XZG,XZD,12,0),COLORFF8000;
+{================ 5. 笔（红=上笔 / 绿=下笔，细虚线） ================}
+DRAWLINE(SHOW_BI=1 AND BI=-1,BIP,SHOW_BI=1 AND BI=1,BIP,0),DOTLINE,COLORRED;
+DRAWLINE(SHOW_BI=1 AND BI=1,BIP,SHOW_BI=1 AND BI=-1,BIP,0),DOTLINE,COLORGREEN;
 
-{=== 一买一卖 ===}
-DRAWTEXT(B1V>0,LOW*0.995,'一买'),COLORYELLOW;
-DRAWTEXT(S1V>0,HIGH*1.005,'一卖'),COLORYELLOW;
+{================ 6. 笔中枢：上下沿轨线 + 起止竖框 + 中轴 ================}
+NOTEXT_BZG:IF(SHOW_BZS=1,BZG,DRAWNULL),COLORBROWN;
+NOTEXT_BZD:IF(SHOW_BZS=1,BZD,DRAWNULL),COLORBROWN;
+STICKLINE(SHOW_BZS=1 AND BZSE<>0,BZD,BZG,0,0),COLORBROWN;
+NOTEXT_BZZ:IF(SHOW_BZS=1 AND BZG>0,(BZG+BZD)/2,DRAWNULL),COLOR404040,DOTLINE;
+{ 若想改回「整段浅色填充」，把上面 STICKLINE 那行注释掉、改用下面这行：}
+{ STICKLINE(SHOW_BZS=1 AND BZG>0,BZD,BZG,0,1),COLOR404040; }
 
-{=== 二买二卖 ===}
-DRAWTEXT(B2V>0,LOW*0.993,'二买'),COLORRED;
-DRAWTEXT(S2V>0,HIGH*1.007,'二卖'),COLORGREEN;
+{================ 7. 线段与线段中枢 ================}
+DRAWLINE(SHOW_XD=1 AND XDM=-1,XDP,SHOW_XD=1 AND XDM=1,XDP,0),LINETHICK2,COLORFF8000;
+DRAWLINE(SHOW_XD=1 AND XDM=1,XDP,SHOW_XD=1 AND XDM=-1,XDP,0),LINETHICK2,COLORLIBLUE;
+NOTEXT_XZG:IF(SHOW_XZS=1,XZG,DRAWNULL),COLORFF8000;
+NOTEXT_XZD:IF(SHOW_XZS=1,XZD,DRAWNULL),COLORFF8000;
+STICKLINE(SHOW_XZS=1 AND XZSE<>0,XZD,XZG,0,0),COLORFF8000;
 
-{=== 三买三卖 ===}
-DRAWTEXT(B3V>0,LOW*0.991,'三买'),COLORMAGENTA;
-DRAWTEXT(S3V>0,HIGH*1.009,'三卖'),COLORBLUE;
+{================ 8. 买卖点（分类错位，避免堆叠） ================}
+DRAWTEXT(SHOW_MMD=1 AND B23,LOW*0.965,'2+3B'),COLORRED;
+DRAWTEXT(SHOW_MMD=1 AND B1V,LOW*0.975,'1B'),COLORYELLOW;
+DRAWTEXT(SHOW_MMD=1 AND B2V AND NOT(B23),LOW*0.985,'2B'),COLORRED;
+DRAWTEXT(SHOW_MMD=1 AND B3V AND NOT(B23),LOW*0.995,'3B'),COLORMAGENTA;
+DRAWTEXT(SHOW_MMD=1 AND S23,HIGH*1.035,'2+3S'),COLORGREEN;
+DRAWTEXT(SHOW_MMD=1 AND S1V,HIGH*1.025,'1S'),COLORYELLOW;
+DRAWTEXT(SHOW_MMD=1 AND S2V AND NOT(S23),HIGH*1.015,'2S'),COLORGREEN;
+DRAWTEXT(SHOW_MMD=1 AND S3V AND NOT(S23),HIGH*1.005,'3S'),COLORLIBLUE;
+DRAWTEXT(SHOW_MMD=1 AND PZV AND NOT(B1V OR B2V OR B3V),LOW*0.955,'背'),COLORWHITE;
 
-{=== 盘整背驰 ===}
-DRAWTEXT(PZV>0,HIGH*1.012,'背'),COLORWHITE;
+{================ 9. 背驰图标：31=笔力度背驰, 32=段力度背驰, 8=MACD面积背驰 ================}
+DRAWICON(SHOW_BC=1 AND 笔背离,IF(BI=-1,LOW*0.99,HIGH*1.01),31);
+DRAWICON(SHOW_BC=1 AND 段背离,IF(XDM=-1,LOW*0.98,HIGH*1.02),32);
+DRAWICON(SHOW_BC=1 AND PZV,LOW*0.95,8);
