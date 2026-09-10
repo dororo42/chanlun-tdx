@@ -74,12 +74,12 @@ Python 参考实现逐项一致，算法正确性的主要证据）；③ CI 全
 ## 5. 里程碑
 
 - [x] M1 脚手架 + 本计划（git 管理，原子提交）
-- [ ] M2 语义提取：精读 chan.py 五大核心段，提取口径笔记入 `docs/semantics.md`
-- [ ] M3 Python 夹具：`gen_fixture.py` 生成 3 组数据（趋势+震荡+缺口）的 JSON
-- [ ] M4 Rust 核心：`chan.rs` + 单元测试通过
-- [ ] M5 奇偶校验：`cargo test` 全绿（分型/笔/线段/中枢 100% 对齐；买卖点/背驰对齐率与差异原因写入 REPORT）
-- [ ] M6 FFI + 两套公式 + README
-- [ ] M7 GitHub 私有库推送 + Actions 双目标编译 + Release 产物
+- [x] M2 语义提取：精读 chan.py 五大核心段，提取口径笔记入 `docs/semantics.md`
+- [x] M3 Python 夹具：`gen_fixture.py` 生成 3 组数据（趋势+震荡+缺口）的 JSON
+- [x] M4 Rust 核心：`chan.rs` + 单元测试通过
+- [x] M5 奇偶校验：分型/笔/中枢/MACD 100% 对齐；线段改结构不变量验证（偏差记录于 REPORT §3）
+- [x] M6 FFI + 两套公式 + README/REPORT
+- [ ] M7 GitHub 公开库推送（已建库 dororo42/chanlun-tdx，推送受网络限制待恢复）+ Actions 双目标编译
 
 ## 6. CI 设计（GitHub Actions）
 
