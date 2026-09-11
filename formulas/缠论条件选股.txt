@@ -12,8 +12,8 @@
 {      chan2zen/rust-chan 的 BARSLAST(SIG=2) 比较法。                        }
 {   2. 叠加笔/段力度背驰过滤，剔除「有买点但力度未衰竭」的追高票。            }
 {   3. 增加基础过滤（次新股 / ST / 停牌 / 无数据）。                          }
-{   注意  : 若公式编译报「NAMELIKE 未定义」，删掉基础OK 里的 NOT(NAMELIKE('ST')) }
-{           一段即可（或把 FLT 置 0）。                                      }
+{   注意  : 若公式编译报「NAMELIKE 未定义」，把基础OK 里的 NAMELIKE('ST')=0   }
+{           删掉（含前面的 AND）即可，或把 FLT 置 0 关闭过滤。                 }
 {==========================================================================}
 
 {---------------- 参数 ----------------}
@@ -75,11 +75,13 @@ DBC:=BARSLAST(笔背离); DXC:=BARSLAST(段背离);
 新背驰:=(HASBB AND DBC<N) OR (HASXB AND DXC<N);
 
 { 买点之后未出现反向卖点 → 该买点的走势结构仍然有效 }
-未破B2:=新二买 AND (NOT HASS1 OR DS1>DB2) AND (NOT HASS2 OR DS2>DB2) AND (NOT HASS3 OR DS3>DB2);
-未破B3:=新三买 AND (NOT HASS1 OR DS1>DB3) AND (NOT HASS2 OR DS2>DB3) AND (NOT HASS3 OR DS3>DB3);
+{ 注：通达信的 NOT 不能作用于单个变量（会报「某个操作数没有相应的操作符匹配」），}
+{     故一律写成 HASSx=0；当 HASSx 为假时 DSx 无意义，用 OR 短路保护。        }
+未破B2:=新二买 AND (HASS1=0 OR DS1>DB2) AND (HASS2=0 OR DS2>DB2) AND (HASS3=0 OR DS3>DB2);
+未破B3:=新三买 AND (HASS1=0 OR DS1>DB3) AND (HASS2=0 OR DS2>DB3) AND (HASS3=0 OR DS3>DB3);
 
 {================ 4. 基础过滤 ================}
-基础OK:=FLT=0 OR (BARSCOUNT(C)>MBS AND C>0 AND V>0 AND NOT(NAMELIKE('ST')));
+基础OK:=FLT=0 OR (BARSCOUNT(C)>MBS AND C>0 AND V>0 AND NAMELIKE('ST')=0);
 
 {================ 5. 选股条件 ================}
 XG:(未破B2 OR 未破B3) AND 新背驰 AND 基础OK;

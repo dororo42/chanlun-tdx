@@ -117,6 +117,51 @@ def check_ignore():
         print(f"  保留 {x}: {'FAIL 被误忽略' if ignored(x) else 'OK'}")
 
 
+def check_not_usage():
+    """通达信的 NOT 不能作用于单个变量/表达式（会报「某个操作数没有相应的操作符匹配」）。
+    合法写法：X=0（取反）、NOT(A AND B) 这类整体表达式在部分版本可用但仍不推荐。
+    这里拦截 NOT 后紧跟 变量名 或 ( 的写法。"""
+    print("=== 7) 公式 NOT 用法（通达信不允许 NOT 作用于单个操作数）===")
+    # 通达信里 NOTEXT_xxx 是合法的输出前缀（NOTEXT_BZG 等），NOT 只是词的一部分。
+    # 判据：NOT 之后必须紧跟空白或 ( 才是运算符；NOTEXT 这类连写不算。
+    # 合法取反写法：X=0。本检查拦截 NOT X / NOT(X) 这类单操作数形态。
+    pat = re.compile(
+        r"(?<![A-Za-z0-9_\u4e00-\u9fff])NOT(?![A-Za-z0-9_\u4e00-\u9fff])\s*[(]?\s*"
+        r"([A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*)"
+    )
+    for f in sorted((ROOT / "formulas").glob("*.txt")):
+        t = f.read_text(encoding="utf-8")
+        body = re.sub(r"\{[^}]*\}", "", t)  # 去注释块
+        lines = body.splitlines()
+        hits = []
+        for i, l in enumerate(lines, 1):
+            for m in pat.finditer(l):
+                frag = m.group(0)
+                # 排除 NOT(A OR B) / NOT(B1V OR B2V) 这类括号内为复合表达式的情况：
+                # 括号内若含运算符（AND/OR/>/</=/+/-），按整体表达式处理，不改。
+                inner = l[m.start():]
+                if "(" in inner:
+                    depth, j = 0, inner.find("(")
+                    k = j
+                    while k < len(inner):
+                        if inner[k] == "(":
+                            depth += 1
+                        elif inner[k] == ")":
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        k += 1
+                    seg = inner[j:k + 1]
+                    if re.search(r"\b(AND|OR)\b|[<>=+\-*/]", seg):
+                        continue  # 整体表达式取反，部分版本可用，不拦
+                hits.append((i, l.strip(), frag))
+        if hits:
+            FAIL.append(f"{f.name} 存在可疑 NOT 用法 {len(hits)} 处")
+        print(f"  {f.name}: 可疑 NOT 用法={'无' if not hits else len(hits)}")
+        for i, l, frag in hits[:6]:
+            print(f"      L{i}: {frag}  <- 建议改写为 X=0")
+
+
 def check_no_report_tracked():
     print("=== 6) 版本库内不得存在报告类文件 ===")
     import subprocess
@@ -139,6 +184,7 @@ if __name__ == "__main__":
     check_var_defs()
     check_ignore()
     check_no_report_tracked()
+    check_not_usage()
     print()
     if FAIL:
         print("结果: FAIL")
