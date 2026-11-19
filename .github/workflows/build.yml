@@ -25,6 +25,8 @@ jobs:
           CARGO_TERM_COLOR: always
       - name: precheck（公式结构 / mark 越界 / 忽略规则 / NOT 用法）
         run: python tools/precheck.py
+        env:
+          PYTHONUTF8: "1"  # Windows runner stdout 默认 cp1252，中文输出需 UTF-8
       - run: cargo test
         env:
           CARGO_TERM_COLOR: always

@@ -5,6 +5,10 @@ import re
 import pathlib
 import sys
 
+# Windows 控制台默认 cp1252/cp936，中文输出会 UnicodeEncodeError；统一强制 UTF-8
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FAIL = []
 
