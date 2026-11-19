@@ -11,6 +11,9 @@ crate-type = ["cdylib", "rlib"]
 [profile.release]
 lto = true
 opt-level = 3
+# 约束：不得改为 panic = "abort" —— lib.rs 的 catch_unwind FFI 防护依赖 unwind；
+# abort 会让任何内部 panic 直接终止通达信进程（防护失效）。
+
 [dev-dependencies]
 serde = "1"
 serde_json = "1"

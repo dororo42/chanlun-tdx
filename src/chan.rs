@@ -135,8 +135,14 @@ pub fn merge_and_mark(bars: &[Bar]) -> Vec<ChanK> {
         let r = rel(ks[last].high, ks[last].low, b.high, b.low);
         if r.is_contain() {
             // 合并方向：前前缠K vs 当前缠K（L3417）
-            let take_min =
-                ks.len() >= 2 && rel(ks[last - 1].high, ks[last - 1].low, ks[last].high, ks[last].low).is_down();
+            let take_min = ks.len() >= 2
+                && rel(
+                    ks[last - 1].high,
+                    ks[last - 1].low,
+                    ks[last].high,
+                    ks[last].low,
+                )
+                .is_down();
             if take_min {
                 ks[last].high = ks[last].high.min(b.high);
                 ks[last].low = ks[last].low.min(b.low);
@@ -198,10 +204,18 @@ pub fn collect_fractals(ks: &[ChanK]) -> Vec<Fx> {
     if ks.len() < 3 {
         return out;
     }
-    for i in 1..ks.len() - 1 {
-        match ks[i].kind {
-            Some(Kind::Top) => out.push(Fx { k: i, top: true, feat: ks[i].feat }),
-            Some(Kind::Bottom) => out.push(Fx { k: i, top: false, feat: ks[i].feat }),
+    for (w, i) in ks.windows(3).zip(1..) {
+        match w[1].kind {
+            Some(Kind::Top) => out.push(Fx {
+                k: i,
+                top: true,
+                feat: w[1].feat,
+            }),
+            Some(Kind::Bottom) => out.push(Fx {
+                k: i,
+                top: false,
+                feat: w[1].feat,
+            }),
             _ => {}
         }
     }
@@ -209,8 +223,16 @@ pub fn collect_fractals(ks: &[ChanK]) -> Vec<Fx> {
     // L4859-4862 的"跳右"递归可从右端构造分型(左,中,None)，驱动尾笔（有效性=False））
     let last = ks.len() - 1;
     let tmp = match ks[last].kind {
-        Some(Kind::Top) => Some(Fx { k: last, top: true, feat: ks[last].feat }),
-        Some(Kind::Bottom) => Some(Fx { k: last, top: false, feat: ks[last].feat }),
+        Some(Kind::Top) => Some(Fx {
+            k: last,
+            top: true,
+            feat: ks[last].feat,
+        }),
+        Some(Kind::Bottom) => Some(Fx {
+            k: last,
+            top: false,
+            feat: ks[last].feat,
+        }),
         _ => None,
     };
     if let Some(f) = tmp {
@@ -226,7 +248,11 @@ pub fn collect_fractals(ks: &[ChanK]) -> Vec<Fx> {
 fn extreme_k(ks: &[ChanK], a: usize, b: usize, top: bool, tie_latest: bool) -> usize {
     let mut best = a;
     for i in a..=b {
-        let (vi, vb) = if top { (ks[i].high, ks[best].high) } else { (ks[i].low, ks[best].low) };
+        let (vi, vb) = if top {
+            (ks[i].high, ks[best].high)
+        } else {
+            (ks[i].low, ks[best].low)
+        };
         let better = if top { vi > vb } else { vi < vb };
         if better || (equal_f(vi, vb) && tie_latest) {
             best = i;
@@ -271,7 +297,11 @@ pub fn build_strokes(ks: &[ChanK], fxs: &[Fx]) -> Vec<Fx> {
                     if start_ext != l.k {
                         if let Some(si) = pos(start_ext) {
                             let se = fxs[si];
-                            let more = if l.top { se.feat > l.feat } else { se.feat < l.feat };
+                            let more = if l.top {
+                                se.feat > l.feat
+                            } else {
+                                se.feat < l.feat
+                            };
                             if more {
                                 eps.pop();
                                 let wj = extreme_k(ks, l.k, start_ext, !l.top, false);
@@ -284,7 +314,11 @@ pub fn build_strokes(ks: &[ChanK], fxs: &[Fx]) -> Vec<Fx> {
                     let end_ext = extreme_k(ks, l.k, f.k, f.top, false);
                     let dir_ok = {
                         let rr = rel(ks[l.k].high, ks[l.k].low, ks[f.k].high, ks[f.k].low);
-                        if f.top { rr.is_up() } else { rr.is_down() }
+                        if f.top {
+                            rr.is_up()
+                        } else {
+                            rr.is_down()
+                        }
                     };
                     if end_ext == f.k && dir_ok {
                         eps.push(f);
@@ -301,7 +335,11 @@ pub fn build_strokes(ks: &[ChanK], fxs: &[Fx]) -> Vec<Fx> {
             }
             Some(l) => {
                 // 同型（L4864-4888）：更极值 → 弹出，从区间反极值（武将）起重放；否则忽略
-                let more = if l.top { f.feat > l.feat } else { f.feat < l.feat };
+                let more = if l.top {
+                    f.feat > l.feat
+                } else {
+                    f.feat < l.feat
+                };
                 if more {
                     eps.pop();
                     if eps.is_empty() {
@@ -375,7 +413,12 @@ fn pivot_zg_zd(lines: &[Line], a: usize) -> (f64, f64) {
 /// 基础检查（L6803）：左vs右 关系 ∈ {向上,向下,顺,逆,同}（排除缺口与衔接）
 fn pivot_base_ok(lines: &[Line], a: usize) -> bool {
     matches!(
-        rel(lines[a].high, lines[a].low, lines[a + 2].high, lines[a + 2].low),
+        rel(
+            lines[a].high,
+            lines[a].low,
+            lines[a + 2].high,
+            lines[a + 2].low
+        ),
         Rel::Up | Rel::Down | Rel::Shun | Rel::Ni | Rel::Same
     )
 }
@@ -397,7 +440,12 @@ pub fn build_pivots(lines: &[Line]) -> Vec<Pivot> {
         }
         if i >= 2 {
             // 同向进入跳过（L6912-6917）
-            let r = rel(lines[i - 2].high, lines[i - 2].low, lines[i - 1].high, lines[i - 1].low);
+            let r = rel(
+                lines[i - 2].high,
+                lines[i - 2].low,
+                lines[i - 1].high,
+                lines[i - 1].low,
+            );
             if (r.is_up() && lines[i - 1].dir_up) || (r.is_down() && !lines[i - 1].dir_up) {
                 continue 'outer;
             }
@@ -445,7 +493,13 @@ pub fn build_pivots(lines: &[Line]) -> Vec<Pivot> {
             }
             match found {
                 Some(a) => {
-                    pivots.push(Pivot { zg: cur_zg, zd: cur_zd, start_li: cur_start, end_li: cur_end, tbs });
+                    pivots.push(Pivot {
+                        zg: cur_zg,
+                        zd: cur_zd,
+                        start_li: cur_start,
+                        end_li: cur_end,
+                        tbs,
+                    });
                     let (zg, zd) = pivot_zg_zd(lines, a);
                     cur_start = a;
                     cur_end = a + 2;
@@ -461,7 +515,13 @@ pub fn build_pivots(lines: &[Line]) -> Vec<Pivot> {
         }
         j += 1;
     }
-    pivots.push(Pivot { zg: cur_zg, zd: cur_zd, start_li: cur_start, end_li: cur_end, tbs });
+    pivots.push(Pivot {
+        zg: cur_zg,
+        zd: cur_zd,
+        start_li: cur_start,
+        end_li: cur_end,
+        tbs,
+    });
     pivots
 }
 
@@ -481,9 +541,16 @@ struct FeatElem {
 fn elem_from(bis: &[Line], dir_up: bool, members: &[usize]) -> FeatElem {
     // 向上段特征簇整体取 max（高低都取簇内最大），向下段整体取 min（chan.py L5052-5098：
     // 向上取高高中的最大 / 向下取低低中的最小）
-    let (mut high, mut low) =
-        if dir_up { (f64::NEG_INFINITY, f64::NEG_INFINITY) } else { (f64::INFINITY, f64::INFINITY) };
-    let mut wen_feat = if dir_up { f64::NEG_INFINITY } else { f64::INFINITY };
+    let (mut high, mut low) = if dir_up {
+        (f64::NEG_INFINITY, f64::NEG_INFINITY)
+    } else {
+        (f64::INFINITY, f64::INFINITY)
+    };
+    let mut wen_feat = if dir_up {
+        f64::NEG_INFINITY
+    } else {
+        f64::INFINITY
+    };
     let mut wen_bi = members[0];
     for &bi in members {
         let b = &bis[bi];
@@ -506,7 +573,14 @@ fn elem_from(bis: &[Line], dir_up: bool, members: &[usize]) -> FeatElem {
             }
         }
     }
-    FeatElem { first_bi: members[0], last_bi: members[members.len() - 1], high, low, wen_feat, wen_bi }
+    FeatElem {
+        first_bi: members[0],
+        last_bi: members[members.len() - 1],
+        high,
+        low,
+        wen_feat,
+        wen_bi,
+    }
 }
 
 /// 特征范围分型判定（L5162/5198：可以逆序包含=True，忽视顺序包含=True）
@@ -526,9 +600,8 @@ fn triple_kind_ranges(l: &FeatElem, m: &FeatElem, r: &FeatElem) -> Option<Kind> 
     }
 }
 
-/// 特征序列分析结果
+/// 特征序列分析结果（feats 为函数内部工作状态，不对外暴露）
 struct FeatScan {
-    feats: Vec<FeatElem>,
     /// 末三特征构成终止分型时的（终点笔, 下一特征左/中间隔缺口）
     terminated: Option<(usize, bool, usize)>,
 }
@@ -557,7 +630,7 @@ fn scan_features(bis: &[Line], seg_bis: &[usize], dir_up: bool, prev_gap: bool) 
                     let n = feats.len();
                     let mid = feats[n - 2].clone();
                     let right = feats[n - 1].clone();
-                    let (fh, fl) = fake_range(bis, dir_up, mid.first_bi, right.last_bi);
+                    let (fh, fl) = fake_range(bis, mid.first_bi, right.last_bi);
                     feats.pop();
                     feats.pop();
                     feats.push(FeatElem {
@@ -609,14 +682,18 @@ fn scan_features(bis: &[Line], seg_bis: &[usize], dir_up: bool, prev_gap: bool) 
             if terminated.is_none() && feats.len() >= 3 {
                 let n = feats.len();
                 let k = triple_kind_ranges(&feats[n - 3], &feats[n - 2], &feats[n - 1]);
-                let hit = match (dir_up, k) {
-                    (true, Some(Kind::Top)) => true,
-                    (false, Some(Kind::Bottom)) => true,
-                    _ => false,
-                };
+                let hit = matches!(
+                    (dir_up, k),
+                    (true, Some(Kind::Top)) | (false, Some(Kind::Bottom))
+                );
                 if hit {
-                    let gap = rel(feats[n - 3].high, feats[n - 3].low, feats[n - 2].high, feats[n - 2].low)
-                        .is_gap();
+                    let gap = rel(
+                        feats[n - 3].high,
+                        feats[n - 3].low,
+                        feats[n - 2].high,
+                        feats[n - 2].low,
+                    )
+                    .is_gap();
                     terminated = Some((feats[n - 1].last_bi, gap, feats[n - 2].wen_bi));
                 }
             }
@@ -625,13 +702,13 @@ fn scan_features(bis: &[Line], seg_bis: &[usize], dir_up: bool, prev_gap: bool) 
             }
         }
     }
-    FeatScan { feats, terminated }
+    FeatScan { terminated }
 }
 
 /// fake 元素范围（L5166-5170）：小号.文 → 大号.武
-fn fake_range(bis: &[Line], dir_up: bool, first_bi: usize, last_bi: usize) -> (f64, f64) {
-    let start = if dir_up { bis[first_bi].wen_feat } else { bis[first_bi].wen_feat };
-    let end = if dir_up { bis[last_bi].wu_feat } else { bis[last_bi].wu_feat };
+fn fake_range(bis: &[Line], first_bi: usize, last_bi: usize) -> (f64, f64) {
+    // 文端特征与武端特征与段方向无关（文=起点值，武=终点值），高低直接取端点极值
+    let (start, end) = (bis[first_bi].wen_feat, bis[last_bi].wu_feat);
     (start.max(end), start.min(end))
 }
 
@@ -725,7 +802,7 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
                 // 缺口突破修正（chan.py L5698-5754 的批处理等价）：
                 // 末段方向与突破笔反向、末段处于老阳/老阴链（其起点特征间隔有缺口）、
                 // 且反向笔突破前段终点方向的极值 → 撤销末段并入前段，前段延至突破极值处。
-                // 例：zigzag (459,524)+(524,568) → bi32 低 117.34 无突破……实际突破=bi32? 
+                // 例：zigzag (459,524)+(524,568) → bi32 低 117.34 无突破……实际突破=bi32?
                 // py 日志确认触发=缺口突破：段(524,568) 老阴、反向笔(591→599) 高 133.67>段高 133.52。
                 let mut merged_ok = false;
                 if segs.len() >= 2 && prev_gap {
@@ -749,7 +826,9 @@ pub fn build_segments(bis: &[Line]) -> Vec<Segment> {
                         let view_chk: Vec<usize> = (prev.start_bi..bis.len()).collect();
                         let new_term = scan_features(bis, &view_chk, prev.dir_up, false).terminated;
                         let prev_still_valid = match new_term {
-                            Some((chk_end, _, _)) => chk_end > prev.end_bi && chk_end < bis.len() - 1,
+                            Some((chk_end, _, _)) => {
+                                chk_end > prev.end_bi && chk_end < bis.len() - 1
+                            }
                             None => false,
                         };
                         if !prev_still_valid {
@@ -859,11 +938,11 @@ pub fn macd(closes: &[f64], fast: usize, slow: usize, signal: usize) -> MacdOut 
 pub fn macd_area(hist: &[f64], a: usize, b: usize, up_dir: bool, mode_total: bool) -> f64 {
     let mut yang = 0.0;
     let mut yin = 0.0;
-    for i in a..=b {
-        if hist[i] >= 0.0 {
-            yang += hist[i];
+    for &v in &hist[a..=b] {
+        if v >= 0.0 {
+            yang += v;
         } else {
-            yin += hist[i];
+            yin += v;
         }
     }
     if mode_total {
@@ -938,11 +1017,17 @@ pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<Mmd
             let l = &lines[j];
             // 回抽笔不回中枢 → 三买；反抽笔不回中枢 → 三卖
             if !l.dir_up && l.low > p.zg {
-                out.push(MmdMark { bar: l.wu, kind: Mmd::Buy3 });
+                out.push(MmdMark {
+                    bar: l.wu,
+                    kind: Mmd::Buy3,
+                });
                 break;
             }
             if l.dir_up && l.high < p.zd {
-                out.push(MmdMark { bar: l.wu, kind: Mmd::Sell3 });
+                out.push(MmdMark {
+                    bar: l.wu,
+                    kind: Mmd::Sell3,
+                });
                 break;
             }
             // 离开笔：向上离开 = 武端（顶）高于 ZG；向下离开 = 武端（底）低于 ZD
@@ -970,13 +1055,23 @@ pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<Mmd
             if down_trend && !dir_up {
                 // 创新低 + 面积收缩 → 一买
                 if lines[v].low < lines[b.start_li].low && ae != 0.0 && vl.abs() < ae.abs() {
-                    out.push(MmdMark { bar: lines[v].wu, kind: Mmd::Buy1 });
+                    out.push(MmdMark {
+                        bar: lines[v].wu,
+                        kind: Mmd::Buy1,
+                    });
                 }
             }
-            if up_trend && dir_up {
-                if lines[v].high > lines[b.start_li].high && ae != 0.0 && vl.abs() < ae.abs() {
-                    out.push(MmdMark { bar: lines[v].wu, kind: Mmd::Sell1 });
-                }
+            // 创新高 + 面积收缩 → 一卖
+            if up_trend
+                && dir_up
+                && lines[v].high > lines[b.start_li].high
+                && ae != 0.0
+                && vl.abs() < ae.abs()
+            {
+                out.push(MmdMark {
+                    bar: lines[v].wu,
+                    kind: Mmd::Sell1,
+                });
             }
         }
     }
@@ -990,14 +1085,22 @@ pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<Mmd
         })
         .collect();
     for (bar, is_sell) in one_bars {
-        let Some(bi_idx) = lines.iter().position(|l| l.wu == bar) else { continue };
+        let Some(bi_idx) = lines.iter().position(|l| l.wu == bar) else {
+            continue;
+        };
         if bi_idx + 2 < lines.len() {
             let d = &lines[bi_idx + 2];
             if !is_sell && !d.dir_up && d.low > lines[bi_idx].low {
-                out.push(MmdMark { bar: d.wu, kind: Mmd::Buy2 });
+                out.push(MmdMark {
+                    bar: d.wu,
+                    kind: Mmd::Buy2,
+                });
             }
             if is_sell && d.dir_up && d.high < lines[bi_idx].high {
-                out.push(MmdMark { bar: d.wu, kind: Mmd::Sell2 });
+                out.push(MmdMark {
+                    bar: d.wu,
+                    kind: Mmd::Sell2,
+                });
             }
         }
     }
@@ -1013,7 +1116,10 @@ pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<Mmd
                 lines[v].low < lines[p.start_li].low
             };
             if new_ext && ae != 0.0 && vl.abs() < ae.abs() {
-                out.push(MmdMark { bar: lines[v].wu, kind: Mmd::PzBeichi });
+                out.push(MmdMark {
+                    bar: lines[v].wu,
+                    kind: Mmd::PzBeichi,
+                });
             }
         }
     }
@@ -1021,38 +1127,4 @@ pub fn detect_mmds(lines: &[Line], bi_pivots: &[Pivot], hist: &[f64]) -> Vec<Mmd
     out.sort_by_key(|m| m.bar);
     out.dedup_by(|a, b| a.bar == b.bar && a.kind == b.kind);
     out
-}
-
-pub fn dbg_scan(bis: &[Line]) -> (usize, bool, usize) {
-    let view: Vec<usize> = (0..bis.len()).collect();
-    let scan = scan_features(bis, &view, false, false);
-    match scan.terminated {
-        Some((end_bi, gap, _)) => (end_bi, gap, scan.feats.len()),
-        None => (usize::MAX, false, scan.feats.len()),
-    }
-}
-
-pub fn dbg_scan2(bis: &[Line]) -> Vec<(f64, f64)> {
-    let view: Vec<usize> = (0..bis.len()).collect();
-    let scan = scan_features(bis, &view, false, false);
-    scan.feats.iter().map(|f| (f.high, f.low)).collect()
-}
-
-pub fn dbg_scan3(bis: &[Line], from: usize, dir_up: bool) -> (usize, usize) {
-    let view: Vec<usize> = (from.saturating_sub(1)..bis.len()).collect();
-    let scan = scan_features(bis, &view, dir_up, false);
-    match scan.terminated {
-        Some((e, _, _)) => (e, scan.feats.len()),
-        None => (usize::MAX, scan.feats.len()),
-    }
-}
-
-pub fn dbg_scan_view(bis: &[Line], view: &[usize], dir_up: bool) -> (Option<usize>, usize) {
-    let scan = scan_features(bis, view, dir_up, false);
-    (scan.terminated.map(|(e, _, _)| e), scan.feats.len())
-}
-
-pub fn dbg_feats(bis: &[Line], view: &[usize], dir_up: bool) -> Vec<(f64, f64)> {
-    let scan = scan_features(bis, view, dir_up, false);
-    scan.feats.iter().map(|f| (f.high, f.low)).collect()
 }

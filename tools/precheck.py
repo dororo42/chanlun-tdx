@@ -45,13 +45,14 @@ def check_formulas():
 def check_marks():
     print("=== 3) 公式调用 mark vs DLL 注册表 ===")
     src = (ROOT / "src/lib.rs").read_text(encoding="utf-8")
-    # 只取有实现函数的项；n_func_mark: 0 / None 是数组终止哨兵，不算功能 mark
-    pairs = re.findall(r"n_func_mark: (\d+), p_call_func: Some", src)
+    # 只取有实现函数的项；n_func_mark: 0 / None 是数组终止哨兵，不算功能 mark。
+    # \s* 容忍 rustfmt 把 struct 字面量折成多行的写法（正则不能依赖源码行格式）
+    pairs = re.findall(r"n_func_mark:\s*(\d+),\s*p_call_func:\s*Some", src)
     reg = {int(x) for x in pairs}
     print(f"  DLL 注册: {sorted(reg)}")
     if reg != set(range(1, 21)):
         FAIL.append(f"DLL 注册 mark 异常: {sorted(reg)} (期望 1..20)")
-    if "n_func_mark: 0, p_call_func: None" not in src:
+    if re.search(r"n_func_mark:\s*0,\s*p_call_func:\s*None", src) is None:
         FAIL.append("缺少终止哨兵项 n_func_mark: 0 / None")
     for f in sorted((ROOT / "formulas").glob("*.txt")):
         t = re.sub(r"\{[^}]*\}", "", f.read_text(encoding="utf-8"))

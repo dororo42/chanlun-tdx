@@ -49,7 +49,9 @@ fn set(out: &mut [Vec<f32>], mark: usize, bar: usize, v: f32) {
 
 fn compute_all(bars: &[Bar]) -> Outputs {
     let n = bars.len();
-    let mut o = Outputs { data: vec![vec![0.0f32; n]; 20] };
+    let mut o = Outputs {
+        data: vec![vec![0.0f32; n]; 20],
+    };
 
     // 1) K线合并 + 分型标记
     let ks = merge_and_mark(bars);
@@ -79,7 +81,12 @@ fn compute_all(bars: &[Bar]) -> Outputs {
         let (a, b) = (w[0], w[1]);
         for e in [a, b] {
             let bar = ks[e.k].mark_bar;
-            set(&mut o.data, mark::BI_MARK, bar, if e.top { 1.0 } else { -1.0 });
+            set(
+                &mut o.data,
+                mark::BI_MARK,
+                bar,
+                if e.top { 1.0 } else { -1.0 },
+            );
             set(&mut o.data, mark::BI_PRICE, bar, e.feat as f32);
         }
     }
@@ -105,9 +112,19 @@ fn compute_all(bars: &[Bar]) -> Outputs {
     // 4) 线段 + 线段中枢
     let segs = build_segments(&lines);
     for s in &segs {
-        set(&mut o.data, mark::XD_MARK, s.wen, if s.dir_up { -1.0 } else { 1.0 });
+        set(
+            &mut o.data,
+            mark::XD_MARK,
+            s.wen,
+            if s.dir_up { -1.0 } else { 1.0 },
+        );
         set(&mut o.data, mark::XD_PRICE, s.wen, s.wen_feat as f32);
-        set(&mut o.data, mark::XD_MARK, s.wu, if s.dir_up { 1.0 } else { -1.0 });
+        set(
+            &mut o.data,
+            mark::XD_MARK,
+            s.wu,
+            if s.dir_up { 1.0 } else { -1.0 },
+        );
         set(&mut o.data, mark::XD_PRICE, s.wu, s.wu_feat as f32);
     }
     // 段中枢的线 = 每个线段本身（文→武），全部保留（chan.py 中枢.分析 输入=线段序列）
@@ -156,20 +173,28 @@ fn compute_all(bars: &[Bar]) -> Outputs {
     o
 }
 
-/// 缓存：以 (长度, 首K线高低收位型, 末K线高低收位型) 为键
+/// 缓存：以 (长度, 全序列 FNV-1a 哈希) 为键。
+///
+/// 【为何哈希全序列】旧键 (长度 + 首末根哈希) 在「中间 K 线被修正而首末根不变」
+/// 的场景（交易所修正历史数据、数据源重传）会命中过期缓存输出错误结果；
+/// 全序列哈希 O(n) 成本相对毫秒级全量重算可忽略，换取确定性正确。
 struct Cache {
-    key: (usize, u64, u64),
+    key: (usize, u64),
     outs: Outputs,
 }
 
-fn key_of(bars: &[Bar]) -> (usize, u64, u64) {
-    fn h(b: &Bar) -> u64 {
-        let mut v = b.high.to_bits();
-        v ^= b.low.to_bits().rotate_left(17);
-        v ^= b.close.to_bits().rotate_left(34);
-        v
+fn key_of(bars: &[Bar]) -> (usize, u64) {
+    // FNV-1a 64-bit：把每根 K 线的 high/low/close 位模式并入哈希
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut h = FNV_OFFSET;
+    for b in bars {
+        for v in [b.high, b.low, b.close] {
+            h ^= v.to_bits();
+            h = h.wrapping_mul(FNV_PRIME);
+        }
     }
-    (bars.len(), bars.first().map(h).unwrap_or(0), bars.last().map(h).unwrap_or(0))
+    (bars.len(), h)
 }
 
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
@@ -190,7 +215,12 @@ fn get_output_row(bars: &[Bar], mark: usize) -> Vec<f32> {
         *guard = Some(Cache { key, outs });
     }
     match guard.as_ref() {
-        Some(c) => c.outs.data.get(mark.wrapping_sub(1)).cloned().unwrap_or_default(),
+        Some(c) => c
+            .outs
+            .data
+            .get(mark.wrapping_sub(1))
+            .cloned()
+            .unwrap_or_default(),
         None => vec![0.0; bars.len()],
     }
 }
@@ -199,7 +229,14 @@ fn get_output_row(bars: &[Bar], mark: usize) -> Vec<f32> {
 type CalcFunc = unsafe extern "C" fn(i32, *mut f32, *const f32, *const f32, *const f32);
 
 /// FFI 安全入口：catch_unwind 防止任何 Rust panic 穿透到 TDX 进程
-unsafe fn run_calc(mark: usize, data_len: i32, pf_out: *mut f32, a: *const f32, b: *const f32, c: *const f32) {
+unsafe fn run_calc(
+    mark: usize,
+    data_len: i32,
+    pf_out: *mut f32,
+    a: *const f32,
+    b: *const f32,
+    c: *const f32,
+) {
     let n = data_len.max(0) as usize;
     if n == 0 || pf_out.is_null() || a.is_null() || b.is_null() || c.is_null() {
         return;
@@ -214,14 +251,19 @@ unsafe fn run_calc(mark: usize, data_len: i32, pf_out: *mut f32, a: *const f32, 
             let h = if h.is_finite() && h > 0.0 { h } else { 0.0 };
             let l = if l.is_finite() && l > 0.0 { l } else { 0.0 };
             let cl = if cl.is_finite() && cl > 0.0 { cl } else { 0.0 };
-            Bar { ts: i as i64, open: 0.0, high: h as f64, low: l as f64, close: cl as f64 }
+            Bar {
+                ts: i as i64,
+                open: 0.0,
+                high: h as f64,
+                low: l as f64,
+                close: cl as f64,
+            }
         })
         .collect();
 
     // catch_unwind：任何 panic 都不穿透 FFI，输出全零
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        get_output_row(&bars, mark)
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| get_output_row(&bars, mark)));
 
     match result {
         Ok(outs) => {
@@ -240,6 +282,19 @@ unsafe fn run_calc(mark: usize, data_len: i32, pf_out: *mut f32, a: *const f32, 
 
 macro_rules! calc_func {
     ($name:ident, $mark:expr) => {
+        /// TDX 公式计算入口：输出 mark = $mark 对应的结果序列。
+        ///
+        /// # Safety
+        ///
+        /// 由通达信进程按 TDX 插件协议调用，调用方必须保证：
+        /// - `pf_ina` / `pf_inb` / `pf_inc` 各指向至少 `data_len` 个可读的 `f32`
+        ///   （依次为 HIGH / LOW / CLOSE 序列）；
+        /// - `pf_out` 指向至少 `data_len` 个可写的 `f32`；
+        /// - 三个输入缓冲区在本次调用全程保持有效（本函数不保存指针、不做异步）。
+        ///
+        /// 任一条件被违反即未定义行为。`data_len <= 0` 或任一指针为空时安全返回；
+        /// 输入含 NaN/Inf/非正值时按 0 参与计算；内部 panic 被 catch_unwind 捕获、
+        /// 输出全零，不会穿透到 TDX 进程。
         #[no_mangle]
         pub unsafe extern "C" fn $name(
             data_len: i32,
@@ -298,30 +353,98 @@ pub struct PluginTCalcFuncInfo {
 
 /// 函数表（TDX 只读，末项 mark=0 为终止哨兵）
 static FUNC_TABLE: [PluginTCalcFuncInfo; FUNC_COUNT + 1] = [
-    PluginTCalcFuncInfo { n_func_mark: 1, p_call_func: Some(calc_fx_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 2, p_call_func: Some(calc_fx_price) },
-    PluginTCalcFuncInfo { n_func_mark: 3, p_call_func: Some(calc_bi_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 4, p_call_func: Some(calc_bi_price) },
-    PluginTCalcFuncInfo { n_func_mark: 5, p_call_func: Some(calc_bi_zs_zg) },
-    PluginTCalcFuncInfo { n_func_mark: 6, p_call_func: Some(calc_bi_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 7, p_call_func: Some(calc_bi_zs_start) },
-    PluginTCalcFuncInfo { n_func_mark: 8, p_call_func: Some(calc_xd_mark) },
-    PluginTCalcFuncInfo { n_func_mark: 9, p_call_func: Some(calc_xd_price) },
-    PluginTCalcFuncInfo { n_func_mark: 10, p_call_func: Some(calc_xd_zs_zg) },
-    PluginTCalcFuncInfo { n_func_mark: 11, p_call_func: Some(calc_buy3) },
-    PluginTCalcFuncInfo { n_func_mark: 12, p_call_func: Some(calc_sell3) },
-    PluginTCalcFuncInfo { n_func_mark: 13, p_call_func: Some(calc_buy2) },
-    PluginTCalcFuncInfo { n_func_mark: 14, p_call_func: Some(calc_sell2) },
-    PluginTCalcFuncInfo { n_func_mark: 15, p_call_func: Some(calc_buy1) },
-    PluginTCalcFuncInfo { n_func_mark: 16, p_call_func: Some(calc_sell1) },
-    PluginTCalcFuncInfo { n_func_mark: 17, p_call_func: Some(calc_pz_beichi) },
-    PluginTCalcFuncInfo { n_func_mark: 18, p_call_func: Some(calc_xd_zs_zd) },
-    PluginTCalcFuncInfo { n_func_mark: 19, p_call_func: Some(calc_bi_zs_edge) },
-    PluginTCalcFuncInfo { n_func_mark: 20, p_call_func: Some(calc_xd_zs_edge) },
-    PluginTCalcFuncInfo { n_func_mark: 0, p_call_func: None },
+    PluginTCalcFuncInfo {
+        n_func_mark: 1,
+        p_call_func: Some(calc_fx_mark),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 2,
+        p_call_func: Some(calc_fx_price),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 3,
+        p_call_func: Some(calc_bi_mark),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 4,
+        p_call_func: Some(calc_bi_price),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 5,
+        p_call_func: Some(calc_bi_zs_zg),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 6,
+        p_call_func: Some(calc_bi_zs_zd),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 7,
+        p_call_func: Some(calc_bi_zs_start),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 8,
+        p_call_func: Some(calc_xd_mark),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 9,
+        p_call_func: Some(calc_xd_price),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 10,
+        p_call_func: Some(calc_xd_zs_zg),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 11,
+        p_call_func: Some(calc_buy3),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 12,
+        p_call_func: Some(calc_sell3),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 13,
+        p_call_func: Some(calc_buy2),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 14,
+        p_call_func: Some(calc_sell2),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 15,
+        p_call_func: Some(calc_buy1),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 16,
+        p_call_func: Some(calc_sell1),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 17,
+        p_call_func: Some(calc_pz_beichi),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 18,
+        p_call_func: Some(calc_xd_zs_zd),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 19,
+        p_call_func: Some(calc_bi_zs_edge),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 20,
+        p_call_func: Some(calc_xd_zs_edge),
+    },
+    PluginTCalcFuncInfo {
+        n_func_mark: 0,
+        p_call_func: None,
+    },
 ];
 
-/// 通达信插件注册入口：把函数表首地址写回 TDX 传入的二级指针
+/// 通达信插件注册入口：把函数表首地址写回 TDX 传入的二级指针。
+///
+/// # Safety
+///
+/// `p_fun` 必须指向一块可写的 `*const PluginTCalcFuncInfo` 存储位置（TDX 分配），
+/// 且在本次调用期间有效。为空时返回 0 而不写入。
 #[no_mangle]
 pub unsafe extern "C" fn RegisterTdxFunc(p_fun: *mut *const PluginTCalcFuncInfo) -> i32 {
     if p_fun.is_null() {
@@ -341,7 +464,11 @@ mod tests {
     #[test]
     fn tdx_struct_layout() {
         use std::mem::{align_of, offset_of, size_of};
-        assert_eq!(size_of::<PluginTCalcFuncInfo>(), 2 + std::mem::size_of::<usize>(), "packed(1) 布局被破坏");
+        assert_eq!(
+            size_of::<PluginTCalcFuncInfo>(),
+            2 + std::mem::size_of::<usize>(),
+            "packed(1) 布局被破坏"
+        );
         assert_eq!(align_of::<PluginTCalcFuncInfo>(), 1);
         assert_eq!(offset_of!(PluginTCalcFuncInfo, n_func_mark), 0);
         assert_eq!(offset_of!(PluginTCalcFuncInfo, p_call_func), 2);
@@ -405,36 +532,115 @@ mod tests {
             assert_eq!(outs.data.len(), 20);
             for (m, row) in outs.data.iter().enumerate() {
                 assert_eq!(row.len(), bars.len(), "mark {} 输出长度错", m + 1);
-                assert!(row.iter().all(|v| v.is_finite()), "mark {} 含非有限值", m + 1);
+                assert!(
+                    row.iter().all(|v| v.is_finite()),
+                    "mark {} 含非有限值",
+                    m + 1
+                );
             }
         }
         // 空序列
         check(&[]);
         // 极短序列（1-3 根，新股）
-        check(&[Bar { ts: 0, open: 1.0, high: 2.0, low: 0.5, close: 1.5 }]);
+        check(&[Bar {
+            ts: 0,
+            open: 1.0,
+            high: 2.0,
+            low: 0.5,
+            close: 1.5,
+        }]);
         check(&[
-            Bar { ts: 0, open: 1.0, high: 2.0, low: 0.5, close: 1.5 },
-            Bar { ts: 1, open: 1.5, high: 2.5, low: 1.0, close: 2.0 },
+            Bar {
+                ts: 0,
+                open: 1.0,
+                high: 2.0,
+                low: 0.5,
+                close: 1.5,
+            },
+            Bar {
+                ts: 1,
+                open: 1.5,
+                high: 2.5,
+                low: 1.0,
+                close: 2.0,
+            },
         ]);
         // 全 0（停牌/无数据）
-        check(&[Bar { ts: 0, open: 0.0, high: 0.0, low: 0.0, close: 0.0 }; 300]);
+        check(
+            &[Bar {
+                ts: 0,
+                open: 0.0,
+                high: 0.0,
+                low: 0.0,
+                close: 0.0,
+            }; 300],
+        );
         // 全同值（一字板）
-        check(&[Bar { ts: 0, open: 5.0, high: 5.0, low: 5.0, close: 5.0 }; 300]);
+        check(
+            &[Bar {
+                ts: 0,
+                open: 5.0,
+                high: 5.0,
+                low: 5.0,
+                close: 5.0,
+            }; 300],
+        );
         // 含 0 段 + 正常段混合
-        let mut mixed = vec![Bar { ts: 0, open: 0.0, high: 0.0, low: 0.0, close: 0.0 }; 50];
+        let mut mixed = vec![
+            Bar {
+                ts: 0,
+                open: 0.0,
+                high: 0.0,
+                low: 0.0,
+                close: 0.0
+            };
+            50
+        ];
         for i in 0..400 {
             let base = 10.0 + (i as f64 * 0.13).sin() * 3.0;
-            mixed.push(Bar { ts: i as i64, open: base, high: base + 1.0, low: base - 1.0, close: base + 0.5 });
+            mixed.push(Bar {
+                ts: i as i64,
+                open: base,
+                high: base + 1.0,
+                low: base - 1.0,
+                close: base + 0.5,
+            });
         }
         check(&mixed);
         // 单调数据（无分型/无笔形态）
-        let mono: Vec<Bar> = (0..200).map(|i| Bar { ts: i, open: i as f64, high: i as f64 + 1.0, low: i as f64 - 1.0, close: i as f64 }).collect();
+        let mono: Vec<Bar> = (0..200)
+            .map(|i| Bar {
+                ts: i,
+                open: i as f64,
+                high: i as f64 + 1.0,
+                low: i as f64 - 1.0,
+                close: i as f64,
+            })
+            .collect();
         check(&mono);
         // 极值
         check(&[
-            Bar { ts: 0, open: 1e-8, high: 1e-8, low: 1e-8, close: 1e-8 },
-            Bar { ts: 1, open: 1e10, high: 1e12, low: 1e-10, close: 1e11 },
-            Bar { ts: 2, open: 5.0, high: 6.0, low: 4.0, close: 5.0 },
+            Bar {
+                ts: 0,
+                open: 1e-8,
+                high: 1e-8,
+                low: 1e-8,
+                close: 1e-8,
+            },
+            Bar {
+                ts: 1,
+                open: 1e10,
+                high: 1e12,
+                low: 1e-10,
+                close: 1e11,
+            },
+            Bar {
+                ts: 2,
+                open: 5.0,
+                high: 6.0,
+                low: 4.0,
+                close: 5.0,
+            },
         ]);
     }
 
@@ -467,19 +673,69 @@ mod tests {
             };
             // 正常数据
             let mut out = vec![f32::NAN; n];
-            f(n as i32, out.as_mut_ptr(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
+            f(
+                n as i32,
+                out.as_mut_ptr(),
+                hi.as_ptr(),
+                lo.as_ptr(),
+                cl.as_ptr(),
+            );
             assert!(out.iter().all(|v| v.is_finite()), "正常数据输出含 NaN");
 
             // NaN 输入（停牌股/无数据品种）
             let bad = vec![f32::NAN; n];
             let mut out2 = vec![f32::NAN; n];
-            f(n as i32, out2.as_mut_ptr(), bad.as_ptr(), bad.as_ptr(), bad.as_ptr());
+            f(
+                n as i32,
+                out2.as_mut_ptr(),
+                bad.as_ptr(),
+                bad.as_ptr(),
+                bad.as_ptr(),
+            );
             assert!(out2.iter().all(|v| v.is_finite()), "NaN 输入必须输出有限值");
 
             // DataLen=0 / 空指针（防御）
             f(0, out2.as_mut_ptr(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
-            f(n as i32, std::ptr::null_mut(), hi.as_ptr(), lo.as_ptr(), cl.as_ptr());
+            f(
+                n as i32,
+                std::ptr::null_mut(),
+                hi.as_ptr(),
+                lo.as_ptr(),
+                cl.as_ptr(),
+            );
         }
+    }
+
+    /// 【回归】缓存键区分性：长度与首末根相同、中间不同的两条序列必须得到不同键。
+    /// （旧键 (长度+首末根哈希) 对此无法区分，会命中过期缓存——A-1 修复的防回归锚点）
+    #[test]
+    fn cache_key_distinguishes_inner_changes() {
+        let mut a: Vec<Bar> = (0..300)
+            .map(|i| {
+                let base = 10.0 + (i as f64 * 0.1).sin() * 3.0;
+                Bar {
+                    ts: i as i64,
+                    open: base,
+                    high: base + 1.0,
+                    low: base - 1.0,
+                    close: base,
+                }
+            })
+            .collect();
+        let b = a.clone();
+        // 只改中间两根（首末根与长度均不变）
+        a[150].close += 1.5;
+        a[151].low -= 2.0;
+        assert_ne!(
+            key_of(&a),
+            key_of(&b),
+            "中间变化而首末根不变必须得到不同缓存键"
+        );
+        // 确定性：同一条序列两次求键一致
+        assert_eq!(key_of(&b), key_of(&b.clone()));
+        // 空序列键稳定且不同长度键不同
+        assert_eq!(key_of(&[]), key_of(&[]));
+        assert_ne!(key_of(&b[..299]), key_of(&b));
     }
 
     // ---------------- v2 公式侧改动对应的回归测试 ----------------
@@ -488,7 +744,9 @@ mod tests {
     fn synth_bars(n: usize) -> Vec<Bar> {
         let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
         let mut rand01 = move || {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((s >> 33) as f64) / ((1u64 << 31) as f64)
         };
         let mut v = Vec::with_capacity(n);
@@ -498,14 +756,28 @@ mod tests {
             let (o, c) = (price, price + (rand01() - 0.5) * 0.6);
             let hi = o.max(c) + rand01() * 0.5;
             let lo = o.min(c) - rand01() * 0.5;
-            v.push(Bar { ts: i as i64, open: o, high: hi, low: lo, close: c });
+            v.push(Bar {
+                ts: i as i64,
+                open: o,
+                high: hi,
+                low: lo,
+                close: c,
+            });
             price = c;
         }
         v
     }
 
     fn line(wen: usize, wu: usize, dir_up: bool, wf: f64, uf: f64) -> Line {
-        Line { wen, wu, dir_up, high: wf.max(uf), low: wf.min(uf), wen_feat: wf, wu_feat: uf }
+        Line {
+            wen,
+            wu,
+            dir_up,
+            high: wf.max(uf),
+            low: wf.min(uf),
+            wen_feat: wf,
+            wu_feat: uf,
+        }
     }
 
     /// 【回归】笔端点必须全部输出，含首笔文端（旧实现 `let _ = a;` 丢弃了它）
@@ -523,8 +795,16 @@ mod tests {
         assert_eq!(marked, eps.len(), "笔端点未全部输出（首笔文端缺失）");
 
         let first_bar = ks[eps[0].k].mark_bar;
-        assert_eq!(row[first_bar], if eps[0].top { 1.0 } else { -1.0 }, "首笔文端未标记");
-        assert_eq!(outs.data[mark::BI_PRICE - 1][first_bar], eps[0].feat as f32, "首笔文端价格缺失");
+        assert_eq!(
+            row[first_bar],
+            if eps[0].top { 1.0 } else { -1.0 },
+            "首笔文端未标记"
+        );
+        assert_eq!(
+            outs.data[mark::BI_PRICE - 1][first_bar],
+            eps[0].feat as f32,
+            "首笔文端价格缺失"
+        );
     }
 
     /// 【回归】笔中枢/线段中枢的起止标记（mark 19/20）必须与中枢区间一致
@@ -575,7 +855,13 @@ mod tests {
     #[test]
     fn buy3_detects_pullback_after_leave_stroke() {
         let hist = vec![0.0f64; 40];
-        let pivot = Pivot { zg: 10.55, zd: 10.05, start_li: 0, end_li: 2, tbs: None };
+        let pivot = Pivot {
+            zg: 10.55,
+            zd: 10.05,
+            start_li: 0,
+            end_li: 2,
+            tbs: None,
+        };
         let base = vec![
             line(0, 5, true, 10.00, 10.60),
             line(5, 9, false, 10.60, 10.05),
@@ -611,7 +897,13 @@ mod tests {
     #[test]
     fn sell3_detects_rebound_after_leave_stroke() {
         let hist = vec![0.0f64; 40];
-        let pivot = Pivot { zg: 10.55, zd: 10.05, start_li: 0, end_li: 2, tbs: None };
+        let pivot = Pivot {
+            zg: 10.55,
+            zd: 10.05,
+            start_li: 0,
+            end_li: 2,
+            tbs: None,
+        };
         let ls = vec![
             line(0, 5, true, 10.00, 10.60),
             line(5, 9, false, 10.60, 10.05),

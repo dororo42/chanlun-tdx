@@ -13,6 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: rustfmt
+        run: cargo fmt --check
+        env:
+          CARGO_TERM_COLOR: always
+      - name: clippy（零警告门禁）
+        run: cargo clippy --all-targets -- -D warnings
+        env:
+          CARGO_TERM_COLOR: always
+      - name: precheck（公式结构 / mark 越界 / 忽略规则 / NOT 用法）
+        run: python tools/precheck.py
       - run: cargo test
         env:
           CARGO_TERM_COLOR: always
